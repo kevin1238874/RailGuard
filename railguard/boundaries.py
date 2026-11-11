@@ -304,6 +304,45 @@ def _far_side_darkness(gray: np.ndarray, a: Segment, b: Segment) -> tuple[float,
     return float(np.median(inside)), float(np.median(outside))
 
 
+def _center_painted_stroke(mask: np.ndarray, line: Segment) -> tuple[Segment, float]:
+    """Move the detected *edge* of a bright paint stripe to its centerline.
+
+    Hough often detects either side of the same ~10–25 px painted band;
+    matching a person's foot to that side produces systematic boundary errors.
+    Sample short runs of segmented paint orthogonal to the candidate line and
+    use the median run-center displacement. Keep the original if evidence is
+    too fragmented or line clipping would fail.
+    """
+    h, w = mask.shape
+    direction = _direction(line)
+    normal = np.array([-direction[1], direction[0]])
+    reach = max(18, int(min(h, w) * .075))
+    offsets = np.arange(-reach, reach+1, dtype=float)
+    displacements = []
+    for t in np.linspace(.10, .90, 35):
+        p = np.asarray(line.a)*(1-t)+np.asarray(line.b)*t
+        xs = np.rint(p[0] + normal[0]*offsets).astype(int)
+        ys = np.rint(p[1] + normal[1]*offsets).astype(int)
+        inside = (xs >= 0) & (xs < w) & (ys >= 0) & (ys < h)
+        flags = np.zeros(len(xs), dtype=bool)
+        flags[inside] = mask[ys[inside], xs[inside]] > 0
+        indices = np.flatnonzero(flags)
+        if not len(indices):
+            continue
+        runs = np.split(indices, np.flatnonzero(np.diff(indices)>1)+1)
+        runs = [run for run in runs if 3 <= len(run) <= max(15, reach*1.6)]
+        if not runs:
+            continue
+        closest = min(runs, key=lambda run: abs(float(np.mean(offsets[run]))))
+        displacements.append(float(np.mean(offsets[closest])))
+    if len(displacements) < 12:
+        return line, 0.
+    delta = float(np.median(displacements))
+    mid = (np.asarray(line.a)+np.asarray(line.b))*.5 + normal*delta
+    shifted = _extend_to_image(mid, direction, w, h)
+    return (shifted or line), delta
+
+
 def estimate_zone(image: np.ndarray, method: str = "color_hough", color: str = "both",
                   clahe: bool = False, min_gap_frac: float = .06,
                   max_gap_frac: float = .78) -> LineResult:
@@ -403,6 +442,20 @@ def estimate_zone(image: np.ndarray, method: str = "color_hough", color: str = "
     score, zone, details = options[0]
     diagnostics.update(details)
     diagnostics["top_pair_score"] = round(score, 2)
+    # Hough sees paint borders, not the painted stripe center. Refine L from
+    # the segmented stripe while preserving the structural platform edge E.
+    paint_support, _ = _paint_line_evidence(gray, zone.safety_line)
+    if paint_support >= .42:
+        centered, shift = _center_painted_stroke(paint_mask(image, color, clahe),
+                                               zone.safety_line)
+        try:
+            refined_zone = HazardZone(centered, zone.platform_edge)
+            refined_zone.polygon()
+        except ValueError:
+            diagnostics["paint_center_refinement"] = "rejected_geometry"
+        else:
+            zone = refined_zone
+            diagnostics["paint_center_shift_px"] = round(shift, 1)
     # This is still only a proposal. Surface cues cannot label a safety line
     # and platform edge unambiguously in every station/camera.
     return LineResult(zone, "estimated_review_required", diagnostics)

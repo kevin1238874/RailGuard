@@ -116,6 +116,10 @@ def test_auto_zone_rejects_train_reflections_as_safety_paint():
         assert 330 < max(e0[0], e1[0]) < 420
         assert result.diagnostics["outside_brightness"] < 70
         assert result.diagnostics["paint_support_fraction"] >= .4
+        if method != "canny_hough":
+            # Centered on the actual painted band, not one of its two edges.
+            assert abs(max(l0[0], l1[0])-175) < 20
+            assert abs(min(l0[0], l1[0])-85) < 20
 
 
 def test_bright_stripe_without_clear_platform_edge_is_not_a_confirmed_zone():

@@ -18,5 +18,5 @@
 
 - Streamlit custom components v2 provides a bounded image viewport. Independent +/− buttons and wheel events zoom the image without resizing the browser page; Pan mode drags the image, Fit resets it.
 - Point editing is always performed in normalized *image* coordinates after zoom/pan transformations. The editor returns the current zoom and center with edit events to preserve viewport continuity on Python reruns.
-- HSV/Hough auto-proposals now reject white train reflections which have a dark track on one side. Candidate edges are assessed for a bright platform interior and dark outside. Results remain non-calibrated estimates requiring human confirmation.
+- HSV/Hough auto-proposals now reject white train reflections which have a dark track on one side. Candidate edges are assessed for a bright platform interior and dark outside. A median segmented-stripe offset recenters the safety boundary between the two sides of a painted stripe. Results remain non-calibrated estimates requiring human confirmation.
 - Browser smoke tests cover click, marker drag, zoom, wheel, fit and pan. Unit tests include a synthetic scene with narrow platform paint, a dark track gap and misleading bright train reflections.
