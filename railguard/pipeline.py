@@ -33,12 +33,13 @@ def analyze(image: np.ndarray, people: list[Person], zone: HazardZone | None = N
     if zone is None and auto_boundary:
         estimate = estimate_zone(image, method=boundary_method, color=paint_color)
         zone, status = estimate.zone, estimate.status
-    if zone is None:
-        return [], None, status
+    # Fail closed: keep one UNKNOWN result per detected person rather than
+    # silently reporting zero people or zero violations when geometry is absent.
     decisions = []
     for person in people:
         feet, source = person.foot_points(foot_method, keypoint_confidence, pose_fallback)
-        intrusion = any(zone.contains(point, tolerance_px=tolerance_px) for point in feet) if feet else None
+        intrusion = (any(zone.contains(point, tolerance_px=tolerance_px) for point in feet)
+                     if zone is not None and feet else None)
         decisions.append(Decision(person.bbox, person.confidence, feet, source,
                                   intrusion, person.object_id))
     return decisions, zone, status

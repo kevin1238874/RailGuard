@@ -31,7 +31,7 @@ def test_reject_degenerate_geometry():
 def test_missing_calibration_abstains():
     image = np.zeros((100, 100, 3), dtype=np.uint8)
     decisions, zone, status = analyze(image, [Person((10, 10, 40, 80))])
-    assert decisions == [] and zone is None and status == "missing_calibration"
+    assert len(decisions) == 1 and decisions[0].intrusion is None and zone is None and status == "missing_calibration"
 
 
 def test_ankle_rule_checks_either_foot():
@@ -51,3 +51,15 @@ def test_missing_pose_keypoints_abstain_or_fallback():
     assert res[0].intrusion is None
     res, _, _ = analyze(image, [person], zone, foot_method="pose", pose_fallback="bbox")
     assert res[0].intrusion is True and res[0].foot_source == "bbox_fallback"
+
+
+def test_missing_geometry_produces_unknown_not_empty_detections():
+    import numpy as np
+    from railguard.detection import Person
+    from railguard.pipeline import analyze
+    image = np.zeros((80, 80, 3), dtype=np.uint8)
+    decisions, zone, status = analyze(image, [Person((10, 10, 30, 60))], zone=None)
+    assert zone is None
+    assert status == "missing_calibration"
+    assert len(decisions) == 1
+    assert decisions[0].intrusion is None
