@@ -61,6 +61,7 @@ if st.session_state.get("rg_source_id") != source_id:
     st.session_state["rg_source_id"] = source_id
     st.session_state["rg_image_id"] = image_id
     st.session_state["rg_points"] = empty_points()
+    st.session_state["rg_view"] = {"zoom": 1, "center": [.5, .5]}
     st.session_state["rg_generation"] = st.session_state.get("rg_generation", 0) + 1
     st.session_state["rg_zone_source"] = "manual"
     st.session_state["rg_approval"] = False
@@ -138,7 +139,8 @@ if not ok:
     st.stop()
 editor_result = render_zone_canvas(base64.b64encode(encoded.tobytes()).decode("ascii"),
                                    st.session_state["rg_points"],
-                                   st.session_state["rg_generation"])
+                                   st.session_state["rg_generation"],
+                                   st.session_state.get("rg_view"))
 edit = editor_result.edit
 if edit is not None:
     try:
@@ -150,6 +152,14 @@ if edit is not None:
     else:
         if revised != st.session_state["rg_points"]:
             st.session_state["rg_points"] = revised
+            incoming_view = edit.get("view")
+            if isinstance(incoming_view, dict):
+                zoom = incoming_view.get("zoom")
+                center = incoming_view.get("center")
+                if (isinstance(zoom, (float, int)) and not isinstance(zoom, bool)
+                    and 1 <= zoom <= 12 and isinstance(center, list) and len(center) == 2
+                    and all(isinstance(v, (float, int)) and 0 <= v <= 1 for v in center)):
+                    st.session_state["rg_view"] = {"zoom": float(zoom), "center": center}
             st.session_state["rg_generation"] += 1
             st.session_state["rg_zone_source"] = "manually edited"
             st.session_state["rg_approval"] = False

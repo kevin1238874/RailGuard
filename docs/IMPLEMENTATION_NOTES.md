@@ -12,3 +12,11 @@
 - `app.py`: four-step image upload → automatic provisional zone suggestion or YAML import → direct correction and explicit approval → YAML download/local save → real YOLO inference (not mocked). Geometry edits reset approval and stale predictions.
 
 > Model downloads and original image downloads are deliberately **not** performed by unit tests. The included synthetic PNGs are created only after running the smoke-test generator and have no scientific validity as a benchmark.
+
+
+## Interactive viewport and conservative auto-boundary correction
+
+- Streamlit custom components v2 provides a bounded image viewport. Independent +/− buttons and wheel events zoom the image without resizing the browser page; Pan mode drags the image, Fit resets it.
+- Point editing is always performed in normalized *image* coordinates after zoom/pan transformations. The editor returns the current zoom and center with edit events to preserve viewport continuity on Python reruns.
+- HSV/Hough auto-proposals now reject white train reflections which have a dark track on one side. Candidate edges are assessed for a bright platform interior and dark outside. Results remain non-calibrated estimates requiring human confirmation.
+- Browser smoke tests cover click, marker drag, zoom, wheel, fit and pan. Unit tests include a synthetic scene with narrow platform paint, a dark track gap and misleading bright train reflections.

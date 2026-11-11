@@ -85,3 +85,43 @@ def test_no_paint_never_claims_geometry():
     result = estimate_zone(blank, method="hybrid")
     assert result.zone is None
     assert result.status.startswith("uncertain_")
+
+
+def test_auto_zone_rejects_train_reflections_as_safety_paint():
+    """Regression: distant bright train glints must not replace platform paint.
+
+    Synthetic image emulates a camera looking almost along the platform:
+    paint near x=175..85, real platform edge x=385..345, two long bright
+    reflections on the train beyond the dark track gap.
+    """
+    h, w = 500, 760
+    image = np.full((h, w, 3), 145, np.uint8)
+    for y in range(0, h, 36):
+        cv2.line(image, (0, y), (355, y - 20), (128, 128, 128), 1)
+    cv2.fillPoly(image, [np.array([[385, 0], [345, h-1], [w, h-1], [w, 0]],
+                                     np.int32)], (24, 24, 24))
+    cv2.line(image, (360, 0), (325, h-1), (205, 205, 205), 18)
+    cv2.line(image, (175, 0), (85, h-1), (250, 250, 250), 15)
+    cv2.line(image, (600, 0), (640, h-1), (230, 230, 230), 22)
+    cv2.line(image, (690, 0), (710, h-1), (240, 240, 240), 9)
+    for method in ("hybrid", "color_hough", "canny_hough"):
+        result = estimate_zone(image, method=method)
+        assert result.status == "estimated_review_required"
+        assert result.zone is not None
+        l0, l1 = result.zone.safety_line.a, result.zone.safety_line.b
+        e0, e1 = result.zone.platform_edge.a, result.zone.platform_edge.b
+        assert 60 <= min(l0[0], l1[0]) < 130
+        assert 140 < max(l0[0], l1[0]) <= 220
+        assert 300 < min(e0[0], e1[0]) < 385
+        assert 330 < max(e0[0], e1[0]) < 420
+        assert result.diagnostics["outside_brightness"] < 70
+        assert result.diagnostics["paint_support_fraction"] >= .4
+
+
+def test_bright_stripe_without_clear_platform_edge_is_not_a_confirmed_zone():
+    """Auto geometry must never be reported as calibrated ground truth."""
+    canvas = np.full((420, 640, 3), 140, np.uint8)
+    cv2.line(canvas, (170, 0), (100, 419), (245, 245, 245), 12)
+    result = estimate_zone(canvas, method="hybrid")
+    assert result.zone is None
+    assert result.status.startswith("uncertain_")
