@@ -1,0 +1,6 @@
+# DEMO CALIBRATION ONLY. NOT real RailEye3D line coordinates.
+# Manually configure a unique <sequence>.yaml per camera before quantitative evaluation.
+coordinates: normalized
+zone:
+  safety_line: [[0.0, 0.58], [1.0, 0.58]]
+  platform_edge: [[0.0, 0.73], [1.0, 0.73]]

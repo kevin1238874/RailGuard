@@ -1,0 +1,23 @@
+# Local datasets and raw RailEye3D imagery (not distributable here)
+data/*
+!data/README.md
+models/
+weights/
+outputs/
+runs/
+*.pt
+*.pth
+*.onnx
+# Python, editor, system
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.coverage
+.ruff_cache/
+.DS_Store
+.vscode/
+.idea/
+.env
