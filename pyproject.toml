@@ -17,7 +17,7 @@ dependencies = [
 
 [project.optional-dependencies]
 vision = ["ultralytics>=8.3"]
-demo = ["streamlit>=1.35"]
+demo = ["streamlit>=1.56,<2"]
 dev = ["pytest>=8"]
 
 [project.scripts]

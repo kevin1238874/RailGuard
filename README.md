@@ -20,7 +20,7 @@ RailGuard investigates whether a person's feet enter a calibrated hazardous area
 
 Pipeline: **frame → person detection/pose → foot points → calibrated Z → decision → visualization/evaluation**.
 
-A secondary **classical image-processing** experiment (`--auto-boundary`) explores HSV paint segmentation, Canny/Hough, and line consensus to find candidate safety/edge lines. It is a heuristic, **not a trustworthy source of geometry**: it can return UNKNOWN when evidence is insufficient and its estimated lines require human verification. Use manual calibration as the primary experimental condition.
+A secondary **classical image-processing** experiment (`--auto-boundary`) explores HSV paint segmentation, Canny/Hough, and orientation-invariant line consensus to suggest safety/edge lines, including steep or near-vertical camera views. It is a heuristic, **not a trustworthy source of geometry**: it can fail or select the wrong real-world structures. The updated web demo supports **Auto Detect → click/drag correction → explicit confirmation → save camera YAML → YOLO inference**. Use verified per-camera calibration as the primary experimental condition.
 
 ## 2. RailEye3D and data access
 
@@ -155,13 +155,24 @@ railguard train --data data/processed/yolo/data.yaml --weights yolo11n.pt --epoc
 
 This trains a **person detector**, not a new safety-line classifier or a pose network. It requires train/val images with box labels and does not fine-tune `yolo11n-pose.pt`. Training scripts must never access test annotations to tune parameters. The test split may be exported but must **not** be used for fitting.
 
-### Step G — Interactive demo
+### Step G — Interactive demo (click/drag calibration)
 
 ```bash
+# First installation (includes Streamlit and YOLO):
+pip install -e ".[vision,demo,dev]"
 streamlit run app.py
 ```
 
-Upload an image, upload or edit a **camera-specific** YAML zone, confirm the visual overlay, then select bbox or pose inference. The demo performs actual YOLO inference (not a mock-up). Without installed Ultralytics or available model weights, it reports an error instead of manufacturing predictions.
+Open the local Streamlit URL (usually `http://localhost:8501`) and follow the **four visible steps**:
+
+1. **Upload an RGB image.** Optionally upload an existing camera YAML in the sidebar. The image and imported YAML are associated with the current view; changing either **invalidates the previous approval**.
+2. **Auto Detect L/E** to get a provisional suggestion using `hybrid` (HSV paint cues + Canny/Hough line segments) or other selectable methods. If the algorithm cannot find a pair, it leaves existing points unchanged and displays a warning. You can also start manually with **Clear four points**.
+3. **Edit directly on the image**: click **L0 / L1 / E0 / E1** and click the corresponding location, or **drag an existing colored point**. The yellow/orange line is **L (safety paint)**, blue is **E (platform edge)**, and the translucent polygon is **Z**. Four valid points are mandatory. This works for steep and near-vertical lines; no numeric coordinate entry is needed. **Review L and E visually**: an auto proposal is *not* a geometric ground truth and may select rails or highlights by mistake.
+4. **Confirm, save, and infer**: check the verification box, enter a safe fixed-camera or RailEye3D sequence name, then **Download camera YAML** or **Save to local `configs/<sequence>.yaml`** (on the computer running Streamlit). Saving an existing YAML requires the explicit overwrite checkbox. Only after valid geometry and confirmation does **Run YOLO on this image** become enabled. It displays actual predictions and provides JSON export.
+
+Any **new point edit or new Auto Detect** resets approval and clears stale inference results. Model loading may download weights when first invoked. The auto-detection candidate must **not** be treated as an automatically validated calibration, even if a polygon looks plausible. Camera-specific saved YAML can be used for other frames of that same **stationary camera**, and by the CLI for reproducible evaluation.
+
+Streamlit's native **components v2** is used for direct manipulation (requires `streamlit>=1.56`; your existing `1.67` is compatible). No extra third-party canvas package is required. Run `python -m pytest -q` after updating.
 
 ## 5. Implementation structure
 
