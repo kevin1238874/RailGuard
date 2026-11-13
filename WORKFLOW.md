@@ -8,7 +8,7 @@
 
 **Mục tiêu:** Hoàn thiện một pipeline có thể giải thích và đánh giá khoa học về phát hiện người vượt vạch an toàn tại sân ga: `ảnh/video → M1 tiền xử lý → M2 tìm L/E và vùng Z → M3 phát hiện người/điểm chân → M4 phán đoán vi phạm → E1–E5 thực nghiệm + demo`.
 
-1. **Đọc trước khi sửa:** `README.md`, `docs/RESEARCH_PROTOCOL.md`, `docs/IMPLEMENTATION_NOTES.md`, `railguard/{raileye,boundaries,geometry,config,calibration,zone_editor,web_editor,detection,pipeline,evaluate,metrics,splitting,cli,export_yolo}.py`, `app.py`, `tests/` và file này. In ra danh sách chức năng *đã có / thiếu / sai / chưa xác minh* trong `docs/PROGRESS.md`.
+1. **Đọc trước khi sửa:** `README.md`, `docs/RESEARCH_PROTOCOL.md`, `docs/IMPLEMENTATION_NOTES.md`, `railguard/{raileye,boundaries,geometry,config,calibration,zone_editor,ui_state,server,detection,pipeline,evaluate,metrics,splitting,cli,export_yolo}.py`, `railguard/studio/index.html`, `tests/` và file này. In ra danh sách chức năng *đã có / thiếu / sai / chưa xác minh* trong `docs/PROGRESS.md`.
 2. **Không viết lại từ đầu:** ưu tiên tái sử dụng các hàm sẵn có, thiết kế module rõ ràng, giữ CLI, định dạng annotation, file YAML và API hiện tại nếu có thể. Những thay đổi không tương thích phải có migration và test.
 3. **Làm tuần tự** theo các pha P0 → P7 bên dưới; mỗi pha có deliverables, test và tiêu chí nghiệm thu. Chưa qua kiểm thử pha trước thì không đánh dấu pha sau là `DONE`.
 4. **Trung thực về dữ liệu:** không có ảnh RailEye3D gốc thì chỉ kiểm thử bằng ảnh synthetic / dữ liệu người dùng cấp quyền và ghi `BLOCKED_REAL_DATA`. Không bịa accuracy, F1, tọa độ vạch hay ảnh ground truth. Không tự tải/đẩy ảnh có hạn chế bản quyền lên repo.
@@ -36,7 +36,7 @@
 | M2 | HSV mask, morphology, Canny, HoughLinesP, nhóm near-collinear + `cv2.fitLine`, heuristic cặp L/E | LAB, RANSAC **thật**, so sánh phương pháp, chọn đúng mép vạch/phía E, nhiều ứng viên và debug hình trung gian |
 | M3 | YOLO11 Nano detection, YOLO11 Nano Pose; bbox đáy + ankle COCO (15,16) | HOG+SVM, MOG2, khảo sát YOLO Pose S/M, imgsz/conf, image enhancement, refinement chân; đo detector riêng |
 | M4 | Polygon `contains`, SAFE/DANGER/UNKNOWN, hình overlay | Xử lý ngoài mép E, điểm trên biên, thiếu điểm, phản hồi độ tin cậy, reason codes |
-| UI | Streamlit, Auto Detect, click/kéo 4 điểm, zoom/pan/Fit, YAML per camera | Tối giản quy trình; hiển thị từng ảnh trung gian; so sánh song song; log hướng dẫn khi auto sai; không treo UI |
+| UI | HTML5/Canvas RailGuard Studio (`server.py`), Auto Detect, click/kéo 4 điểm, zoom/pan/Fit, YAML per camera | Tối giản quy trình; hiển thị từng ảnh trung gian; so sánh song song; log hướng dẫn khi auto sai; không treo UI |
 | Test | Synthetic unit/integration tests + GitHub Actions | Test edge cases, benchmark ảnh thật, kiểm chứng thời gian, ảnh sáng/tối, test không leak |
 
 **Không được hiểu tên `color_ransac` hiện có là RANSAC đúng nghĩa.** `boundaries.py::_fit_segments` đang gom các Hough segments rồi `cv2.fitLine(..., cv2.DIST_L2)`, chưa có sample random + inlier mask + consensus/re-fit/outlier resistance. Phải xử lý đúng hoặc đổi tên để tránh báo cáo sai thuật toán.
@@ -61,7 +61,7 @@ Input RGB image OR ordered fixed-camera frames
 ```
 
 - M1 xử lý cho M2 và M3 là **hai cấu hình riêng**; không áp cùng một biến đổi ảnh cho mọi mô hình rồi tuyên bố nó có lợi.
-- Core API cần chạy độc lập UI, dùng chung bởi CLI, Streamlit và test. Sử dụng cấu hình YAML/JSON rõ seed, method, params, version.
+- Core API cần chạy độc lập UI, dùng chung bởi CLI, RailGuard Studio và test. Sử dụng cấu hình YAML/JSON rõ seed, method, params, version.
 - Thiết kế plugin/registry nhỏ cho preprocessing, boundary candidate, detector, footpoint; tránh viết một hàm dài chứa toàn bộ phương pháp.
 - Giữ `railguard predict`, `evaluate`, `calibrate`, `prepare`, `audit` tương thích; nếu thêm lệnh, ưu tiên `preprocess`, `inspect-lines`, `benchmark-lines`, `benchmark-people`, `run-experiment`. Tất cả phải có `--help` và ví dụ chạy.
 - Gợi ý module **mới** (không bắt buộc đúng tên): `preprocessing.py`, `temporal.py`, `line_models.py`, `edge_scoring.py`, `classic_detectors.py`, `foot_refinement.py`, `experiments.py`; tái sử dụng các module hiện tại.
@@ -70,7 +70,7 @@ Input RGB image OR ordered fixed-camera frames
 
 **Việc làm**
 
-- [ ] Chạy `python -m pytest -q`; ghi baseline test, Python/torch/ultralytics/opencv/streamlit, OS, CPU/GPU, bộ nhớ; ghi commit hiện tại và `git status`.
+- [ ] Chạy `python -m pytest -q`; ghi baseline test, Python/torch/ultralytics/opencv, OS, CPU/GPU, bộ nhớ; ghi commit hiện tại và `git status`.
 - [ ] Kiểm tra file gốc, bbox, params và ảnh. CSV không header của RailEye3D:
 
   ```text
@@ -164,7 +164,7 @@ Input RGB image OR ordered fixed-camera frames
 - [ ] Nếu bổ sung temporal smoothing, phải log độ trễ, số frame tối thiểu và tác động đến false alarms; không bắt buộc giai đoạn đầu.
 - [ ] Unit test geometry: hai camera hướng ngược nhau, line dốc đứng, chéo, chân trong/ngoài Z, vượt E, điểm ngay trên L, ROI nhỏ, poly sai, thiếu calibration, thiếu cổ chân.
 
-**Nghiệm thu P4:** output nhất quán giữa CLI/Streamlit/evaluator; reason codes machine-readable; UNKNOWN không bị tính ngầm thành SAFE; hình vẽ và JSON cùng hệ tọa độ.
+**Nghiệm thu P4:** output nhất quán giữa CLI/Studio/evaluator; reason codes machine-readable; UNKNOWN không bị tính ngầm thành SAFE; hình vẽ và JSON cùng hệ tọa độ.
 
 ## P5 — E1–E5: Protocol thực nghiệm và phân tích khoa học
 
@@ -216,7 +216,7 @@ outputs/experiments/<experiment_id>/
 - [ ] Test unit: parser row alignment + empty frames + missing params; LAB/HSV/CLAHE/gamma noise; RANSAC outlier; lines under 0–180°, false stripe, dark track, reflections; geometry and safe/unsafe; bbox/keypoint fallback; MOG2 temporal; CLI; app state.
 - [ ] Test integration: tạo synthetic multi-frame with stationary camera; toàn pipeline `prepare→preprocess→lines→detector mock→decision→evaluate`; dùng fixture expected metrics, không cần Internet/model download.
 - [ ] Test model thật riêng: sử dụng ảnh đã cấp quyền, tải weights hợp lệ; lưu checksum và version. Nếu không có weights/image, báo rõ `NOT_RUN`.
-- [ ] Chạy `python -m pytest -q`, `python -m compileall -q railguard app.py`, `python -m railguard --help`, `python -m streamlit run app.py` (thử mở UI bằng browser). Nếu máy không cài dependency nào, ghi blocker thay vì báo pass.
+- [ ] Chạy `python -m pytest -q`, `python -m compileall -q railguard`, `python -m railguard --help`, `python -m railguard studio --port 8502` (thử mở UI bằng browser). Nếu máy không cài dependency nào, ghi blocker thay vì báo pass.
 - [ ] Kiểm tra đối chiếu cùng một ảnh giữa UI/CLI; đảm bảo không có leakage, file output đầy đủ, figure before/after, failure cases có giải thích.
 - [ ] Cập nhật `README.md` installation/quick start/dataset access, `docs/METHODOLOGY.md`, `docs/EXPERIMENTS.md`, `docs/PROGRESS.md`; nguồn tham khảo HOG, Canny, Hough, RANSAC, CLAHE, MOG2, YOLO/RailEye3D. Đánh dấu methods **implemented / experimental / not run**, không ghi kết quả ảo.
 - [ ] Dọn code chết, annotate source/weights/licences, tránh commit `.venv/`, `runs/`, raw dataset, model checkpoints, nội dung bí mật.
@@ -254,10 +254,10 @@ Mẫu cập nhật `docs/PROGRESS.md` sau **mỗi pha**:
 ```powershell
 cd D:\FILE\UIT\Year3_Seme1\CS406_ImageProcessing\Project\RailGuard
 .\.venv\Scripts\Activate.ps1
-python -m pip install -e ".[vision,demo,dev]"
+python -m pip install -e ".[vision,dev]"
 python -m pytest -q
 python -m railguard --help
-python -m streamlit run app.py
+python -m railguard studio --port 8502
 ```
 
 Nếu cần cài lại môi trường: `py -3.11 -m venv .venv`, kích hoạt rồi chạy lệnh pip ở trên. Mọi lệnh benchmark **mới** chỉ ghi là lệnh dùng được sau khi agent thực sự tạo CLI tương ứng.

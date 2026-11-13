@@ -1,0 +1,17 @@
+version: 1
+seed: 0
+gamma_convention: "output=255*(input/255)**(1/gamma); gamma>1 brightens"
+branches:
+  m2_boundary:
+    - method: clahe
+      params:
+        clip_limit: 2.0
+        tile_grid_size: [8, 8]
+        color_space: lab
+    - method: gaussian_blur
+      params:
+        kernel_size: 5
+        sigma: 0.0
+  m3_person:
+    - method: identity
+      params: {}

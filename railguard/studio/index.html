@@ -1,0 +1,1143 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RailGuard Pro — Giám sát An toàn Sân ga</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #090D15;
+      --card: #121927;
+      --card-inner: #182235;
+      --card-hover: #223049;
+      --border: rgba(255, 255, 255, 0.08);
+      --border-active: #3B82F6;
+      --text: #F1F5F9;
+      --text-muted: #94A3B8;
+      --text-dim: #64748B;
+      
+      --blue: #3B82F6;
+      --blue-glow: rgba(59, 130, 246, 0.25);
+      --danger: #EF4444;
+      --danger-bg: rgba(239, 68, 68, 0.12);
+      --success: #10B981;
+      --success-bg: rgba(16, 185, 129, 0.12);
+      --warning: #F59E0B;
+      --warning-bg: rgba(245, 158, 11, 0.12);
+      
+      --color-L: #F59E0B;
+      --color-E: #38BDF8;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    header {
+      height: 48px;
+      padding: 0 1.25rem;
+      background: var(--card);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-shrink: 0;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+      font-size: 0.95rem;
+      font-weight: 700;
+    }
+    .brand-tag {
+      font-size: 0.65rem;
+      padding: 0.15rem 0.45rem;
+      background: rgba(59, 130, 246, 0.15);
+      color: var(--blue);
+      border: 1px solid rgba(59, 130, 246, 0.3);
+      border-radius: 4px;
+      font-weight: 600;
+    }
+    .status-indicator {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      font-weight: 500;
+    }
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--success);
+      box-shadow: 0 0 8px var(--success);
+    }
+    .status-dot.busy {
+      background: var(--warning);
+      box-shadow: 0 0 8px var(--warning);
+      animation: pulse 1.2s infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.4; transform: scale(1.15); }
+    }
+
+    .workspace {
+      display: grid;
+      grid-template-columns: 340px 1fr 320px;
+      gap: 0.75rem;
+      padding: 0.75rem;
+      flex: 1;
+      min-height: 0;
+    }
+
+    .panel {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .panel-header {
+      padding: 0.65rem 0.9rem;
+      font-size: 0.76rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--text-muted);
+      border-bottom: 1px solid var(--border);
+      background: rgba(255, 255, 255, 0.015);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .panel-body {
+      padding: 0.85rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.8rem;
+      overflow-y: auto;
+      flex: 1;
+    }
+    .panel-body::-webkit-scrollbar { width: 4px; }
+    .panel-body::-webkit-scrollbar-thumb { background: var(--card-inner); border-radius: 2px; }
+
+    .field {
+      display: flex;
+      flex-direction: column;
+      gap: 0.4rem;
+    }
+    .field-title {
+      font-size: 0.72rem;
+      font-weight: 600;
+      color: var(--text-muted);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    select {
+      background: var(--card-inner);
+      border: 1px solid var(--border);
+      color: var(--text);
+      border-radius: 6px;
+      padding: 0.5rem 0.65rem;
+      font-size: 0.78rem;
+      outline: none;
+      cursor: pointer;
+    }
+    select:focus { border-color: var(--blue); }
+
+    /* Method Group */
+    .method-group {
+      display: flex;
+      flex-direction: column;
+      gap: 0.45rem;
+    }
+    .method-card {
+      display: flex;
+      align-items: flex-start;
+      gap: 0.6rem;
+      background: var(--card-inner);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0.6rem 0.7rem;
+      cursor: pointer;
+      transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+      user-select: none;
+      position: relative;
+    }
+    .method-card:hover:not(.disabled) {
+      border-color: rgba(255, 255, 255, 0.25);
+      background: var(--card-hover);
+    }
+    .method-card.active {
+      border-color: var(--blue);
+      background: rgba(59, 130, 246, 0.09);
+      box-shadow: 0 0 0 1px var(--blue);
+    }
+    .method-card.disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+      pointer-events: none;
+    }
+    .method-card input[type="radio"] {
+      margin-top: 0.15rem;
+      accent-color: var(--blue);
+      cursor: pointer;
+    }
+    .method-card-text {
+      display: flex;
+      flex-direction: column;
+      gap: 0.15rem;
+      flex: 1;
+    }
+    .method-name {
+      font-size: 0.75rem;
+      font-weight: 600;
+      color: var(--text);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .method-desc {
+      font-size: 0.66rem;
+      color: var(--text-dim);
+      line-height: 1.3;
+    }
+    .method-pill {
+      font-size: 0.58rem;
+      padding: 0.1rem 0.35rem;
+      border-radius: 3px;
+      font-weight: 700;
+    }
+    .pill-auto { background: rgba(59, 130, 246, 0.2); color: #60A5FA; }
+    .pill-manual { background: rgba(16, 185, 129, 0.2); color: #34D399; }
+
+    /* Inline Alert Box */
+    .inline-msg {
+      display: none;
+      padding: 0.55rem 0.75rem;
+      border-radius: 6px;
+      font-size: 0.72rem;
+      line-height: 1.35;
+      align-items: center;
+      gap: 0.45rem;
+    }
+    .inline-msg.warning {
+      display: flex;
+      background: var(--warning-bg);
+      color: var(--warning);
+      border: 1px solid rgba(245, 158, 11, 0.3);
+    }
+    .inline-msg.success {
+      display: flex;
+      background: var(--success-bg);
+      color: var(--success);
+      border: 1px solid rgba(16, 185, 129, 0.3);
+    }
+    .inline-msg.info {
+      display: flex;
+      background: rgba(59, 130, 246, 0.12);
+      color: var(--blue);
+      border: 1px solid rgba(59, 130, 246, 0.3);
+    }
+
+    .upload-box {
+      border: 1.5px dashed rgba(255, 255, 255, 0.18);
+      border-radius: 8px;
+      padding: 0.85rem 0.6rem;
+      text-align: center;
+      cursor: pointer;
+      background: rgba(255, 255, 255, 0.015);
+      transition: all 0.2s;
+    }
+    .upload-box:hover {
+      border-color: var(--blue);
+      background: rgba(59, 130, 246, 0.06);
+    }
+    .upload-box-icon { font-size: 1.3rem; margin-bottom: 0.2rem; }
+    .upload-box-text { font-size: 0.76rem; font-weight: 600; }
+    .upload-box-sub { font-size: 0.65rem; color: var(--text-dim); margin-top: 0.15rem; }
+
+    .btn {
+      background: var(--card-inner);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 0.55rem 0.75rem;
+      font-size: 0.78rem;
+      font-weight: 600;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.4rem;
+      transition: all 0.15s;
+    }
+    .btn:hover:not(:disabled) { background: #26334D; }
+    .btn-run {
+      background: var(--blue);
+      color: #FFF;
+      border: none;
+      padding: 0.75rem;
+      font-size: 0.82rem;
+      font-weight: 700;
+      box-shadow: 0 4px 14px var(--blue-glow);
+    }
+    .btn-run:hover:not(:disabled) { background: #2563EB; }
+    .btn:disabled { opacity: 0.35; cursor: not-allowed; }
+
+    .viewport-panel {
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      background: #05080E;
+    }
+    .viewport-toolbar {
+      padding: 0.45rem 0.75rem;
+      background: var(--card);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.5rem;
+      z-index: 5;
+    }
+    .toolbar-grp {
+      display: flex;
+      align-items: center;
+      gap: 0.35rem;
+    }
+    .tool-btn {
+      background: var(--card-inner);
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+      padding: 0.25rem 0.55rem;
+      border-radius: 4px;
+      font-size: 0.72rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .tool-btn:hover { color: #FFF; border-color: rgba(255, 255, 255, 0.25); }
+    .tool-btn.active {
+      background: var(--blue);
+      color: #FFF;
+      border-color: var(--blue);
+    }
+    .tool-btn.btn-L { border-color: rgba(245, 158, 11, 0.4); }
+    .tool-btn.btn-L.active { background: #F59E0B; border-color: #F59E0B; }
+    .tool-btn.btn-E { border-color: rgba(56, 189, 248, 0.4); }
+    .tool-btn.btn-E.active { background: #38BDF8; border-color: #38BDF8; color: #000; }
+    
+    .mode-indicator {
+      font-size: 0.7rem;
+      font-weight: 600;
+      padding: 0.25rem 0.6rem;
+      border-radius: 5px;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+    }
+    .mode-waiting {
+      background: rgba(148, 163, 184, 0.1);
+      color: var(--text-muted);
+      border: 1px solid rgba(148, 163, 184, 0.2);
+    }
+    .mode-locked {
+      background: rgba(239, 68, 68, 0.15);
+      color: #F87171;
+      border: 1px solid rgba(239, 68, 68, 0.3);
+    }
+    .mode-editable {
+      background: rgba(16, 185, 129, 0.15);
+      color: #34D399;
+      border: 1px solid rgba(16, 185, 129, 0.3);
+    }
+
+    .canvas-stage {
+      flex: 1;
+      position: relative;
+      overflow: hidden;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    #main-canvas {
+      display: block;
+      max-width: 100%;
+      max-height: 100%;
+      cursor: default;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+    }
+    #main-canvas.crosshair { cursor: crosshair; }
+
+    .placeholder-view {
+      position: absolute;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 0.5rem;
+      color: var(--text-dim);
+      font-size: 0.8rem;
+      pointer-events: none;
+    }
+    .placeholder-view span:first-child { font-size: 2.2rem; }
+
+    .legend-overlay {
+      position: absolute;
+      bottom: 0.85rem;
+      left: 0.85rem;
+      background: rgba(18, 25, 39, 0.88);
+      backdrop-filter: blur(8px);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 0.4rem 0.75rem;
+      display: flex;
+      gap: 0.95rem;
+      font-size: 0.7rem;
+      font-weight: 600;
+      pointer-events: none;
+      z-index: 4;
+    }
+    .legend-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+
+    .stats-row {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 0.5rem;
+    }
+    .stat-box {
+      background: var(--card-inner);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 0.6rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.15rem;
+    }
+    .stat-label { font-size: 0.65rem; color: var(--text-muted); font-weight: 600; text-transform: uppercase; }
+    .stat-num { font-size: 1.3rem; font-weight: 800; font-family: 'JetBrains Mono', monospace; }
+    .stat-danger { color: var(--danger); }
+    .stat-safe { color: var(--success); }
+
+    .person-container {
+      display: flex;
+      flex-direction: column;
+      gap: 0.45rem;
+      overflow-y: auto;
+      flex: 1;
+      min-height: 180px;
+    }
+    .person-item {
+      background: var(--card-inner);
+      border: 1px solid var(--border);
+      border-left: 3px solid var(--text-dim);
+      border-radius: 6px;
+      padding: 0.55rem 0.65rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.25rem;
+      font-size: 0.72rem;
+    }
+    .person-item.DANGER {
+      border-left-color: var(--danger);
+      background: linear-gradient(90deg, var(--danger-bg), var(--card-inner) 45%);
+    }
+    .person-item.SAFE {
+      border-left-color: var(--success);
+      background: linear-gradient(90deg, var(--success-bg), var(--card-inner) 45%);
+    }
+    .person-row-top { display: flex; justify-content: space-between; font-weight: 700; }
+    .tag { font-size: 0.62rem; padding: 0.12rem 0.4rem; border-radius: 3px; font-weight: 700; }
+    .tag.DANGER { background: var(--danger); color: #FFF; }
+    .tag.SAFE { background: var(--success); color: #FFF; }
+    .person-row-sub { color: var(--text-muted); font-size: 0.68rem; display: flex; justify-content: space-between; }
+  </style>
+</head>
+<body>
+
+  <header>
+    <div class="brand">
+      <span>🚉 RailGuard Studio</span>
+      <span class="brand-tag">CS406</span>
+    </div>
+    <div class="status-indicator">
+      <div class="status-dot" id="status-dot"></div>
+      <span id="sys-status">Chờ tải ảnh sân ga</span>
+    </div>
+  </header>
+
+  <div class="workspace">
+    <!-- CỘT 1: CẤU HÌNH & PHƯƠNG PHÁP -->
+    <div class="panel">
+      <div class="panel-header">1 · Tải ảnh & Chọn phương pháp</div>
+      <div class="panel-body">
+        
+        <div class="upload-box" onclick="document.getElementById('file-input').click()">
+          <div class="upload-box-icon">📷</div>
+          <div class="upload-box-text" id="upload-label">Chọn ảnh sân ga (RGB)</div>
+          <div class="upload-box-sub">Click để duyệt ảnh (JPG / PNG / WEBP)</div>
+          <input type="file" id="file-input" accept="image/*" style="display:none">
+        </div>
+
+        <div class="field">
+          <div class="field-title">
+            <span>Phương pháp xác định vạch L & E</span>
+            <span id="method-state-tag" style="font-size:0.65rem; color:var(--text-dim);">Chờ tải ảnh</span>
+          </div>
+          
+          <div class="method-group">
+            
+            <label class="method-card disabled" id="card-lab">
+              <input type="radio" name="line-method" value="lab_canny_hough">
+              <div class="method-card-text">
+                <div class="method-name">
+                  <span>⚡ 1. LAB Color + Canny + Hough</span>
+                  <span class="method-pill pill-auto">Auto</span>
+                </div>
+                <span class="method-desc">Nội suy đa điểm ưu tiên góc nhìn gần. Khóa tự động.</span>
+              </div>
+            </label>
+
+            <label class="method-card disabled" id="card-hybrid">
+              <input type="radio" name="line-method" value="hybrid_region_evidence">
+              <div class="method-card-text">
+                <div class="method-name">
+                  <span>⚡ 2. Hybrid Region + RANSAC</span>
+                  <span class="method-pill pill-auto">Auto</span>
+                </div>
+                <span class="method-desc">Cắt trước điểm biến tận, nhận diện sụt sáng. Khóa tự động.</span>
+              </div>
+            </label>
+
+            <label class="method-card disabled" id="card-manual">
+              <input type="radio" name="line-method" value="manual">
+              <div class="method-card-text">
+                <div class="method-name">
+                  <span>✏️ 3. Tự xác định thủ công</span>
+                  <span class="method-pill pill-manual">Chỉnh tay</span>
+                </div>
+                <span class="method-desc">Mở quyền chấm & kéo 4 điểm L0, L1, E0, E1 linh hoạt.</span>
+              </div>
+            </label>
+
+          </div>
+        </div>
+
+        <!-- Thông báo nội tuyến -->
+        <div class="inline-msg" id="method-msg"></div>
+
+        <div class="field">
+          <div class="field-title">Mô hình phát hiện người (M3)</div>
+          <select id="detector-select">
+            <option value="A YOLO pose" selected>YOLO11 Pose (Crop-Pose bắt đủ người xa/gần)</option>
+            <option value="B3 YOLO det">YOLO11 Detection (Khung Bounding-Box)</option>
+          </select>
+        </div>
+
+        <button class="btn btn-run" id="btn-run" style="margin-top:auto;" disabled>
+          ▶ Chạy Kiểm tra An toàn
+        </button>
+
+      </div>
+    </div>
+
+    <!-- CỘT 2: KHUNG CANVAS HIỂN THỊ TRỰC QUAN -->
+    <div class="panel viewport-panel">
+      <div class="viewport-toolbar">
+        <div class="toolbar-grp" id="manual-point-tools" style="display:none;">
+          <span style="font-size:0.7rem; color:var(--text-muted); font-weight:600; margin-right:0.2rem;">Chấm điểm:</span>
+          <button class="tool-btn btn-L active" id="tool-L0">L0 Đầu</button>
+          <button class="tool-btn btn-L" id="tool-L1">L1 Cuối</button>
+          <button class="tool-btn btn-E" id="tool-E0">E0 Đầu</button>
+          <button class="tool-btn btn-E" id="tool-E1">E1 Cuối</button>
+        </div>
+        <div id="lock-badge-wrap">
+          <span class="mode-indicator mode-waiting" id="lock-status-badge">⏳ Chờ tải ảnh sân ga</span>
+        </div>
+        <div class="toolbar-grp" style="margin-left:auto;">
+          <button class="tool-btn" id="btn-fit">Fit Khung</button>
+          <button class="tool-btn" id="btn-clear" style="display:none;">Xóa điểm</button>
+        </div>
+      </div>
+
+      <div class="canvas-stage" id="canvas-stage">
+        <canvas id="main-canvas"></canvas>
+        <div class="placeholder-view" id="canvas-placeholder">
+          <span>🖼️</span>
+          <span>Tải ảnh sân ga lên để bắt đầu</span>
+        </div>
+        <div class="legend-overlay" id="legend-overlay" style="display:none;">
+          <div><span class="legend-dot" style="background:var(--color-L);"></span> Vạch sơn L</div>
+          <div><span class="legend-dot" style="background:var(--color-E);"></span> Mép ga E</div>
+          <div><span class="legend-dot" style="background:rgba(245,158,11,0.5);"></span> Vùng nguy hiểm Z</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- CỘT 3: THỐNG KÊ & DANH SÁCH VI PHẠM -->
+    <div class="panel">
+      <div class="panel-header">2 · Kết quả & Thống kê</div>
+      <div class="panel-body">
+        
+        <div class="stats-row">
+          <div class="stat-box">
+            <span class="stat-label">Tổng người</span>
+            <span class="stat-num" id="stat-total">0</span>
+          </div>
+          <div class="stat-box">
+            <span class="stat-label">Trạng thái Frame</span>
+            <span class="stat-num stat-safe" id="stat-frame" style="font-size:1.05rem;">READY</span>
+          </div>
+          <div class="stat-box">
+            <span class="stat-label">Vi phạm (DANGER)</span>
+            <span class="stat-num stat-danger" id="stat-danger">0</span>
+          </div>
+          <div class="stat-box">
+            <span class="stat-label">An toàn (SAFE)</span>
+            <span class="stat-num stat-safe" id="stat-safe">0</span>
+          </div>
+        </div>
+
+        <div class="field" style="flex:1; min-height:0;">
+          <div class="field-title">Danh sách Người được phát hiện</div>
+          <div class="person-container" id="person-container">
+            <div style="text-align:center; color:var(--text-dim); font-size:0.75rem; margin-top:2.5rem;">
+              Chưa có dữ liệu phân tích.
+            </div>
+          </div>
+        </div>
+
+        <div style="display:flex; gap:0.4rem;">
+          <button class="btn" id="btn-dl-png" style="flex:1;" disabled>⬇ Tải PNG</button>
+          <button class="btn" id="btn-dl-json" style="flex:1;" disabled>⬇ Tải JSON</button>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let currentImage = null;
+    let baseImageBitmap = null;
+    let overlayImageBitmap = null;
+    let points = [null, null, null, null]; // L0, L1, E0, E1 normalized (0..1)
+    let selectedPointIdx = 0;
+    let activeMethod = null;
+    let isManualMode = false;
+    let isDragging = false;
+    let dragIdx = -1;
+    let lastResults = null;
+
+    const canvas = document.getElementById('main-canvas');
+    const ctx = canvas.getContext('2d');
+    const fileInput = document.getElementById('file-input');
+    const lockBadge = document.getElementById('lock-status-badge');
+    const manualTools = document.getElementById('manual-point-tools');
+    const btnClear = document.getElementById('btn-clear');
+    const btnRun = document.getElementById('btn-run');
+    const sysStatus = document.getElementById('sys-status');
+    const statusDot = document.getElementById('status-dot');
+    const methodMsg = document.getElementById('method-msg');
+    const methodTag = document.getElementById('method-state-tag');
+    const placeholder = document.getElementById('canvas-placeholder');
+    const legendOverlay = document.getElementById('legend-overlay');
+    const uploadLabel = document.getElementById('upload-label');
+    const methodCards = document.querySelectorAll('.method-card');
+
+    function showInlineMessage(type, text) {
+      methodMsg.className = 'inline-msg ' + type;
+      methodMsg.innerHTML = text;
+      methodMsg.style.display = 'flex';
+    }
+
+    function clearInlineMessage() {
+      methodMsg.style.display = 'none';
+      methodMsg.innerHTML = '';
+    }
+
+    // Xử lý khi click vào phương pháp
+    methodCards.forEach(card => {
+      card.onclick = () => {
+        if (!currentImage) {
+          showInlineMessage('warning', '⚠️ Vui lòng tải ảnh sân ga lên trước!');
+          return;
+        }
+        methodCards.forEach(c => c.classList.remove('active'));
+        card.classList.add('active');
+        const radio = card.querySelector('input[type="radio"]');
+        radio.checked = true;
+        activeMethod = radio.value;
+        handleMethodChange();
+      };
+    });
+
+    function handleMethodChange() {
+      clearInlineMessage();
+      isManualMode = (activeMethod === "manual");
+      overlayImageBitmap = null;
+
+      if (isManualMode) {
+        lockBadge.className = "mode-indicator mode-editable";
+        lockBadge.innerHTML = "✏️ Thủ công: Cho phép nhấp & kéo 4 điểm";
+        manualTools.style.display = "flex";
+        btnClear.style.display = "inline-flex";
+        canvas.classList.add('crosshair');
+        sysStatus.innerText = "Chế độ thủ công: Nhấp 4 điểm L0, L1, E0, E1 trên sân ga";
+        methodTag.innerText = "Thủ công (Chỉnh tay)";
+        methodTag.style.color = "var(--success)";
+        btnRun.disabled = !points.every(p => p !== null);
+        render();
+      } else {
+        lockBadge.className = "mode-indicator mode-locked";
+        lockBadge.innerHTML = "🔒 Vạch Tự động: Đã khóa chống sửa";
+        manualTools.style.display = "none";
+        btnClear.style.display = "none";
+        canvas.classList.remove('crosshair');
+        methodTag.innerText = "Tự động";
+        methodTag.style.color = "var(--blue)";
+        triggerAutoZone(activeMethod);
+      }
+    }
+
+    async function triggerAutoZone(method) {
+      sysStatus.innerText = "Đang phân tích vạch (" + method + ")…";
+      statusDot.className = "status-dot busy";
+      btnRun.disabled = true;
+
+      try {
+        const resp = await fetch('/api/auto-zone', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ image: currentImage, method: method, preproc: 'raw' })
+        });
+        const data = await resp.json();
+        
+        if (data.points) {
+          points = data.points;
+          sysStatus.innerText = "Đã xác định vạch L & E!";
+          statusDot.className = "status-dot";
+          showInlineMessage('success', '✓ Tìm vạch thành công (' + method + '). Vạch đã khóa cố định.');
+          btnRun.disabled = false;
+          render();
+        } else {
+          points = [null, null, null, null];
+          sysStatus.innerText = "Không tìm thấy vạch tin cậy";
+          statusDot.className = "status-dot";
+          showInlineMessage('warning', '⚠️ Không tìm được vạch chắc chắn bằng phương pháp này. Vui lòng thử phương pháp khác hoặc chuyển sang "Tự xác định thủ công".');
+          btnRun.disabled = true;
+          render();
+        }
+      } catch (err) {
+        showInlineMessage('warning', '⚠️ Lỗi kết nối API: ' + err);
+        statusDot.className = "status-dot";
+        btnRun.disabled = true;
+      }
+    }
+
+    // TẢI ẢNH MỚI: RESET HOÀN TOÀN TRẠNG THÁI (KHÔNG TỰ Ý CHẠY AUTO)
+    fileInput.onchange = (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        const img = new Image();
+        img.onload = () => {
+          baseImageBitmap = img;
+          overlayImageBitmap = null;
+          currentImage = event.target.result;
+          
+          // Reset sạch sẽ tất cả
+          points = [null, null, null, null];
+          activeMethod = null;
+          isManualMode = false;
+          clearInlineMessage();
+          
+          // Bỏ chọn tất cả radio options và kích hoạt các card
+          methodCards.forEach(c => {
+            c.classList.remove('active');
+            c.classList.remove('disabled');
+            c.querySelector('input[type="radio"]').checked = false;
+          });
+
+          // Reset Toolbar & Badges
+          manualTools.style.display = "none";
+          btnClear.style.display = "none";
+          canvas.classList.remove('crosshair');
+          btnRun.disabled = true;
+          
+          uploadLabel.innerText = file.name;
+          placeholder.style.display = 'none';
+          legendOverlay.style.display = 'flex';
+          
+          sysStatus.innerText = "Đã tải ảnh mới. Hãy chọn 1 phương pháp để bắt đầu!";
+          statusDot.className = "status-dot";
+          lockBadge.className = "mode-indicator mode-waiting";
+          lockBadge.innerHTML = "👉 Hãy chọn phương pháp xác định vạch";
+          methodTag.innerText = "Chờ chọn";
+          methodTag.style.color = "var(--text-dim)";
+
+          // Reset số liệu thống kê
+          document.getElementById('stat-total').innerText = "0";
+          document.getElementById('stat-frame').innerText = "READY";
+          document.getElementById('stat-frame').className = "stat-num stat-safe";
+          document.getElementById('stat-danger').innerText = "0";
+          document.getElementById('stat-safe').innerText = "0";
+          document.getElementById('person-container').innerHTML = '<div style="text-align:center; color:var(--text-dim); font-size:0.75rem; margin-top:2.5rem;">Chưa có dữ liệu phân tích.</div>';
+          document.getElementById('btn-dl-png').disabled = true;
+          document.getElementById('btn-dl-json').disabled = true;
+
+          fitCanvas();
+        };
+        img.src = event.target.result;
+      };
+      reader.readAsDataURL(file);
+      fileInput.value = '';
+    };
+
+    function fitCanvas() {
+      if (!baseImageBitmap) return;
+      canvas.width = baseImageBitmap.width;
+      canvas.height = baseImageBitmap.height;
+      render();
+    }
+
+    document.getElementById('btn-fit').onclick = fitCanvas;
+
+    const ptToolBtns = [
+      document.getElementById('tool-L0'),
+      document.getElementById('tool-L1'),
+      document.getElementById('tool-E0'),
+      document.getElementById('tool-E1')
+    ];
+    ptToolBtns.forEach((btn, idx) => {
+      btn.onclick = () => {
+        selectedPointIdx = idx;
+        ptToolBtns.forEach((b, i) => b.classList.toggle('active', i === idx));
+      };
+    });
+
+    btnClear.onclick = () => {
+      points = [null, null, null, null];
+      btnRun.disabled = true;
+      render();
+    };
+
+    canvas.onpointerdown = (e) => {
+      if (!isManualMode || !baseImageBitmap) return;
+      const rect = canvas.getBoundingClientRect();
+      const normX = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+      const normY = Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height));
+
+      dragIdx = -1;
+      points.forEach((p, i) => {
+        if (p && Math.hypot(p[0] - normX, p[1] - normY) < 0.04) {
+          dragIdx = i;
+          selectedPointIdx = i;
+        }
+      });
+
+      if (dragIdx === -1) {
+        points[selectedPointIdx] = [normX, normY];
+        selectedPointIdx = (selectedPointIdx + 1) % 4;
+        ptToolBtns.forEach((b, i) => b.classList.toggle('active', i === selectedPointIdx));
+      }
+      isDragging = true;
+      btnRun.disabled = !points.every(p => p !== null);
+      render();
+    };
+
+    window.onpointermove = (e) => {
+      if (!isManualMode || !isDragging || !baseImageBitmap || dragIdx === -1) return;
+      const rect = canvas.getBoundingClientRect();
+      const normX = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+      const normY = Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height));
+      points[dragIdx] = [normX, normY];
+      render();
+    };
+
+    window.onpointerup = () => {
+      isDragging = false;
+      dragIdx = -1;
+    };
+
+    // TÍNH TOÁN DẢI NGUY HIỂM LIÊN TỤC VÀ ĐẦY ĐỦ (KHÔNG BỊ HỤT GÓC DƯỚI)
+    function computeCorridorPolygon(pL0, pL1, pE0, pE1, width, height) {
+      function getX(pA, pB, y) {
+        const dy = pB[1] - pA[1];
+        const dx = pB[0] - pA[0];
+        if (Math.abs(dy) < 1e-6) return pA[0];
+        return pA[0] + dx * (y - pA[1]) / dy;
+      }
+      function getY(pA, pB, x) {
+        const dx = pB[0] - pA[0];
+        const dy = pB[1] - pA[1];
+        if (Math.abs(dx) < 1e-6) return pA[1];
+        return pA[1] + dy * (x - pA[0]) / dx;
+      }
+
+      // Điểm biến tận phối cảnh (dừng vạch tại chân trời sân ga, không bắn lên nóc nhà/bầu trời)
+      const p1 = pL0, p2 = pL1, q1 = pE0, q2 = pE1;
+      const det = (p2[0] - p1[0]) * (-(q2[1] - q1[1])) - (-(q2[0] - q1[0])) * (p2[1] - p1[1]);
+      let yTop = Math.min(p1[1], p2[1], q1[1], q2[1]);
+      if (Math.abs(det) > 1e-5) {
+        const bx = q1[0] - p1[0];
+        const by = q1[1] - p1[1];
+        const t1 = (bx * (-(q2[1] - q1[1])) - by * (-(q2[0] - q1[0]))) / det;
+        const interY = p1[1] + t1 * (p2[1] - p1[1]);
+        if (interY >= 0 && interY < height * 0.75) {
+          yTop = Math.max(0, Math.min(height - 10, Math.max(interY + 15, yTop)));
+        }
+      }
+      const yBot = height - 1;
+
+      // Tập hợp các điểm mốc y quan trọng (đỉnh, đáy, và nơi vạch cắt biên trái/phải)
+      const yEvents = new Set([yTop, yBot]);
+      [[p1, p2], [q1, q2]].forEach(([pA, pB]) => {
+        [0, width - 1].forEach(xEdge => {
+          const yEdge = getY(pA, pB, xEdge);
+          if (yEdge > yTop && yEdge < yBot) {
+            yEvents.add(yEdge);
+          }
+        });
+      });
+
+      const sortedY = Array.from(yEvents).sort((a, b) => a - b);
+      const rightPts = [];
+      sortedY.forEach(y => {
+        const xL = getX(p1, p2, y);
+        const xE = getX(q1, q2, y);
+        const xr = Math.max(0, Math.min(width - 1, Math.max(xL, xE)));
+        if (!rightPts.length || Math.hypot(rightPts[rightPts.length - 1][0] - xr, rightPts[rightPts.length - 1][1] - y) > 0.5) {
+          rightPts.push([xr, y]);
+        }
+      });
+
+      const leftPts = [];
+      sortedY.slice().reverse().forEach(y => {
+        const xL = getX(p1, p2, y);
+        const xE = getX(q1, q2, y);
+        const xl = Math.max(0, Math.min(width - 1, Math.min(xL, xE)));
+        if (!leftPts.length || Math.hypot(leftPts[leftPts.length - 1][0] - xl, leftPts[leftPts.length - 1][1] - y) > 0.5) {
+          leftPts.push([xl, y]);
+        }
+      });
+
+      return rightPts.concat(leftPts);
+    }
+
+    function getLineVisibleSegment(pA, pB, width, height) {
+      function getX(y) {
+        const dy = pB[1] - pA[1];
+        const dx = pB[0] - pA[0];
+        if (Math.abs(dy) < 1e-6) return pA[0];
+        return pA[0] + dx * (y - pA[1]) / dy;
+      }
+      function getY(x) {
+        const dx = pB[0] - pA[0];
+        const dy = pB[1] - pA[1];
+        if (Math.abs(dx) < 1e-6) return pA[1];
+        return pA[1] + dy * (x - pA[0]) / dx;
+      }
+      const pts = [];
+      [0, height - 1].forEach(y => {
+        const x = getX(y);
+        if (x >= -0.5 && x <= width - 0.5) pts.push([Math.max(0, Math.min(width - 1, x)), y]);
+      });
+      [0, width - 1].forEach(x => {
+        const y = getY(x);
+        if (y >= -0.5 && y <= height - 0.5) {
+          if (!pts.some(p => Math.hypot(p[0] - x, p[1] - y) < 2.0)) {
+            pts.push([x, Math.max(0, Math.min(height - 1, y))]);
+          }
+        }
+      });
+      if (pts.length >= 2) return [pts[0], pts[1]];
+      return [pA, pB];
+    }
+
+    function render() {
+      if (!baseImageBitmap) return;
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      const activeImg = overlayImageBitmap || baseImageBitmap;
+      ctx.drawImage(activeImg, 0, 0, canvas.width, canvas.height);
+
+      const toPx = (p) => [p[0] * canvas.width, p[1] * canvas.height];
+
+      // VẼ DẢI NGUY HIỂM Z LIÊN TỤC KHÔNG HỤT GÓC
+      if (points.every(p => p !== null)) {
+        const pL0 = toPx(points[0]);
+        const pL1 = toPx(points[1]);
+        const pE0 = toPx(points[2]);
+        const pE1 = toPx(points[3]);
+
+        const poly = computeCorridorPolygon(pL0, pL1, pE0, pE1, canvas.width, canvas.height);
+
+        if (poly.length >= 3) {
+          ctx.fillStyle = 'rgba(245, 158, 11, 0.26)';
+          ctx.beginPath();
+          ctx.moveTo(poly[0][0], poly[0][1]);
+          for (let i = 1; i < poly.length; i++) {
+            ctx.lineTo(poly[i][0], poly[i][1]);
+          }
+          ctx.closePath();
+          ctx.fill();
+
+          ctx.strokeStyle = 'rgba(245, 158, 11, 0.5)';
+          ctx.lineWidth = 1.5;
+          ctx.stroke();
+        }
+
+        // Vẽ vạch sơn L (amber) và mép ga E (cyan) dừng chuẩn xác tại chân trời sân ga
+        ctx.strokeStyle = '#F59E0B';
+        ctx.lineWidth = 3.5;
+        ctx.beginPath();
+        ctx.moveTo(pL0[0], pL0[1]);
+        ctx.lineTo(pL1[0], pL1[1]);
+        ctx.stroke();
+
+        ctx.strokeStyle = '#38BDF8';
+        ctx.lineWidth = 3.5;
+        ctx.beginPath();
+        ctx.moveTo(pE0[0], pE0[1]);
+        ctx.lineTo(pE1[0], pE1[1]);
+        ctx.stroke();
+      }
+
+      // Vẽ điểm nút neo (Chỉ hiện nhãn khi ở chế độ Thủ công)
+      const labels = ['L0', 'L1', 'E0', 'E1'];
+      points.forEach((p, i) => {
+        if (!p) return;
+        const [cx, cy] = toPx(p);
+        ctx.fillStyle = i < 2 ? '#F59E0B' : '#38BDF8';
+        ctx.beginPath();
+        ctx.arc(cx, cy, isManualMode ? 7 : 4, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = '#FFFFFF';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+
+        if (isManualMode) {
+          ctx.fillStyle = '#FFFFFF';
+          ctx.font = 'bold 12px "JetBrains Mono", sans-serif';
+          ctx.fillText(labels[i], cx + 9, cy - 7);
+        }
+      });
+    }
+
+    btnRun.onclick = async () => {
+      if (!currentImage) return;
+      if (!points.every(p => p !== null)) {
+        showInlineMessage('warning', '⚠️ Chưa đủ 4 điểm vạch an toàn để chạy phân tích.');
+        return;
+      }
+
+      btnRun.disabled = true;
+      btnRun.innerText = '⚡ Đang phân tích…';
+      sysStatus.innerText = 'Đang chạy YOLO & M4…';
+      statusDot.className = "status-dot busy";
+
+      try {
+        const resp = await fetch('/api/run-pipeline', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            image: currentImage,
+            points: points,
+            detector: document.getElementById('detector-select').value,
+            confidence: 0.25,
+            preproc: 'raw'
+          })
+        });
+        const data = await resp.json();
+        lastResults = data;
+        updateResultsUI(data);
+        sysStatus.innerText = 'Hoàn thành: Frame ' + data.frame.status;
+        statusDot.className = "status-dot";
+      } catch (err) {
+        showInlineMessage('warning', '⚠️ Lỗi: ' + err);
+        statusDot.className = "status-dot";
+      } finally {
+        btnRun.disabled = false;
+        btnRun.innerText = '▶ Chạy Kiểm tra An toàn';
+      }
+    };
+
+    function updateResultsUI(data) {
+      document.getElementById('stat-total').innerText = data.results.length;
+      document.getElementById('stat-frame').innerText = data.frame.status;
+      document.getElementById('stat-frame').className = 'stat-num ' + (data.frame.status === 'DANGER' ? 'stat-danger' : 'stat-safe');
+
+      const dangerCount = data.results.filter(r => r.intrusion === true).length;
+      const safeCount = data.results.filter(r => r.intrusion === false).length;
+      document.getElementById('stat-danger').innerText = dangerCount;
+      document.getElementById('stat-safe').innerText = safeCount;
+
+      const container = document.getElementById('person-container');
+      container.innerHTML = '';
+      if (data.results.length === 0) {
+        container.innerHTML = '<div style="text-align:center; color:var(--text-dim); font-size:0.75rem; margin-top:2.5rem;">Không phát hiện người nào trong frame.</div>';
+      } else {
+        data.results.forEach((p, idx) => {
+          const item = document.createElement('div');
+          item.className = 'person-item ' + (p.intrusion ? 'DANGER' : 'SAFE');
+          item.innerHTML = `
+            <div class="person-row-top">
+              <span>Người #${idx + 1} (${p.foot_source})</span>
+              <span class="tag ${p.intrusion ? 'DANGER' : 'SAFE'}">${p.status}</span>
+            </div>
+            <div class="person-row-sub">
+              <span>Conf: ${(p.confidence * 100).toFixed(0)}%</span>
+              <span>Lý do: ${p.reason}</span>
+            </div>
+          `;
+          container.appendChild(item);
+        });
+      }
+
+      if (data.overlay_image) {
+        const overlay = new Image();
+        overlay.onload = () => {
+          overlayImageBitmap = overlay;
+          render();
+        };
+        overlay.src = 'data:image/png;base64,' + data.overlay_image;
+      }
+
+      document.getElementById('btn-dl-png').disabled = false;
+      document.getElementById('btn-dl-json').disabled = false;
+    }
+
+    document.getElementById('btn-dl-png').onclick = () => {
+      if (!lastResults || !lastResults.overlay_image) return;
+      const a = document.createElement('a');
+      a.href = 'data:image/png;base64,' + lastResults.overlay_image;
+      a.download = 'railguard_result.png';
+      a.click();
+    };
+
+    document.getElementById('btn-dl-json').onclick = () => {
+      if (!lastResults) return;
+      const blob = new Blob([JSON.stringify(lastResults, null, 2)], { type: 'application/json' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'railguard_result.json';
+      a.click();
+    };
+  </script>
+</body>
+</html>

@@ -8,10 +8,11 @@ from railguard.export_yolo import export_yolo
 from railguard.cli import main
 
 
-def _prepared(tiny_raileye, tmp_path):
+def _prepared(tiny_raileye, tmp_path, calibration_frames=None):
     root, images, sequences = tiny_raileye
     manifest = make_manifest(root, images)
-    split = split_manifest(manifest, sequences[2], sequences[1])
+    split = split_manifest(manifest, sequences[2], sequences[1],
+                           calibration_frames=calibration_frames)
     csv = tmp_path / "splits.csv"
     split.to_csv(csv, index=False)
     cfg_dir = tmp_path / "configs"
@@ -55,10 +56,26 @@ def test_cli_prepare_audit_split(tiny_raileye, tmp_path, capsys):
     main(["prepare", "--annotations", str(root), "--images", str(images), "--out", str(manifest)])
     assert manifest.exists()
     main(["audit", "--manifest", str(manifest), "--out", str(tmp_path / "audit.json")])
-    assert json.loads((tmp_path / "audit.json").read_text())["frames"] == 6
-    main(["split", "--manifest", str(manifest), "--test-sequence", seq[2],
+    audit = json.loads((tmp_path / "audit.json").read_text())
+    assert audit["frames"] == 6
+    assert (tmp_path / "audit.csv").exists()
+    main(["split", "--manifest", str(manifest), "--split-mode", "train_val_test",
+          "--test-sequence", seq[2],
           "--val-sequence", seq[1], "--out", str(tmp_path / "splits.csv")])
     assert set(pd.read_csv(tmp_path / "splits.csv")["split"]) == {"train", "val", "test"}
+
+
+def test_cli_audit_empty_data_writes_blocked_json_and_csv(tmp_path):
+    json_out = tmp_path / "data_audit.json"
+    csv_out = tmp_path / "data_audit.csv"
+    main(["audit", "--manifest", str(tmp_path / "missing.csv"),
+          "--out", str(json_out), "--csv-out", str(csv_out)])
+    audit = json.loads(json_out.read_text(encoding="utf-8"))
+    assert audit["status"] == "BLOCKED_REAL_DATA"
+    assert audit["frames"] == audit["person_instances"] == 0
+    assert csv_out.exists()
+    flat = pd.read_csv(csv_out).set_index("metric")["value"]
+    assert flat["status"] == "BLOCKED_REAL_DATA"
 
 
 def test_evaluate_reports_frame_level_metrics(tiny_raileye, tmp_path):
@@ -67,3 +84,16 @@ def test_evaluate_reports_frame_level_metrics(tiny_raileye, tmp_path):
     assert out["frame_level_alert_metrics"]["n"] == 2
     assert out["frame_level_alert_metrics"]["tp"] == 1
     assert out["frame_level_alert_metrics"]["tn"] == 1
+
+
+def test_evaluate_excludes_calibration_only_frame(tiny_raileye, tmp_path):
+    _, _, sequences = tiny_raileye
+    csv, cfg_dir = _prepared(
+        tiny_raileye,
+        tmp_path,
+        calibration_frames=[f"{sequences[2]}/00015"],
+    )
+    out = evaluate_manifest(csv, tmp_path / "metrics", cfg_dir, split="test", detector="gt")
+    assert out["frame_level_alert_metrics"]["n"] == 1
+    predictions = pd.read_csv(tmp_path / "metrics" / "predictions.csv")
+    assert set(predictions["frame"]) == {0}

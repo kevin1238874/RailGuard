@@ -1,4 +1,4 @@
-"""Pure calibration helpers shared by the Streamlit image editor and tests.
+"""Pure calibration helpers shared by the RailGuard Studio editor and tests.
 
 The editor works in normalized image coordinates, while detection and geometric
 rules work in pixel coordinates.  A partially placed zone is never valid.
@@ -12,7 +12,7 @@ from pathlib import Path
 import yaml
 
 from .config import get_zone
-from .geometry import HazardZone
+from .geometry import HazardZone, UNSAFE_SIDE_CONVENTION
 
 LABELS = ("L0", "L1", "E0", "E1")
 
@@ -48,6 +48,7 @@ def config_from_points(points: object, width: int, height: int) -> dict:
     clean = validate_points(points, allow_partial=False)
     cfg = {"coordinates": "normalized", "zone": {
         "safety_line": clean[:2], "platform_edge": clean[2:],
+        "unsafe_side": UNSAFE_SIDE_CONVENTION,
     }}
     # Validate geometry before allowing approval / saving / inference.
     get_zone(cfg, width, height)
@@ -57,14 +58,50 @@ def config_from_points(points: object, width: int, height: int) -> dict:
 def points_from_zone(zone: HazardZone, width: int, height: int) -> list[list[float]]:
     if width < 2 or height < 2:
         raise ValueError("Invalid image size")
-    pts = (zone.safety_line.a, zone.safety_line.b,
-           zone.platform_edge.a, zone.platform_edge.b)
-    # Numerical clipping is only for fitted lines whose ends are a fraction
-    # outside the image; a totally out-of-frame zone must not be accepted.
-    if any(x < -1 or y < -1 or x > width or y > height for x, y in pts):
-        raise ValueError("Estimated line endpoints are outside the image")
+    # Tự động cắt giao và nội suy lại điểm vào đúng biên ảnh [0, width-1] x [0, height-1]
+    # nếu điểm bị tính toán vượt ra ngoài biên ảnh
+    def _clip_segment_to_box(p1, p2, w, h):
+        x1, y1 = float(p1[0]), float(p1[1])
+        x2, y2 = float(p2[0]), float(p2[1])
+        dx = x2 - x1
+        dy = y2 - y1
+        pts_in = []
+        # Kiểm tra nếu điểm gốc đã nằm trong hộp
+        if 0 <= x1 <= w - 1 and 0 <= y1 <= h - 1:
+            pts_in.append((x1, y1))
+        if 0 <= x2 <= w - 1 and 0 <= y2 <= h - 1:
+            pts_in.append((x2, y2))
+        # Nếu thiếu điểm, tìm giao với 4 cạnh
+        if len(pts_in) < 2 and (abs(dx) > 1e-7 or abs(dy) > 1e-7):
+            for edge_x in (0.0, float(w - 1)):
+                if abs(dx) > 1e-7:
+                    t = (edge_x - x1) / dx
+                    y_at = y1 + t * dy
+                    if 0 <= y_at <= h - 1:
+                        cand = (edge_x, y_at)
+                        if not any(abs(cand[0]-p[0]) < 1e-3 and abs(cand[1]-p[1]) < 1e-3 for p in pts_in):
+                            pts_in.append(cand)
+            for edge_y in (0.0, float(h - 1)):
+                if abs(dy) > 1e-7:
+                    t = (edge_y - y1) / dy
+                    x_at = x1 + t * dx
+                    if 0 <= x_at <= w - 1:
+                        cand = (x_at, edge_y)
+                        if not any(abs(cand[0]-p[0]) < 1e-3 and abs(cand[1]-p[1]) < 1e-3 for p in pts_in):
+                            pts_in.append(cand)
+        if len(pts_in) >= 2:
+            return pts_in[0], pts_in[1]
+        # Fallback an toàn: clamp trực tiếp
+        c1 = (max(0.0, min(float(w - 1), x1)), max(0.0, min(float(h - 1), y1)))
+        c2 = (max(0.0, min(float(w - 1), x2)), max(0.0, min(float(h - 1), y2)))
+        return c1, c2
+
+    s_a, s_b = _clip_segment_to_box(zone.safety_line.a, zone.safety_line.b, width, height)
+    e_a, e_b = _clip_segment_to_box(zone.platform_edge.a, zone.platform_edge.b, width, height)
+    pts = (s_a, s_b, e_a, e_b)
+
     return validate_points([
-        [max(0, min(1, x / (width - 1))), max(0, min(1, y / (height - 1)))]
+        [max(0.0, min(1.0, float(x) / (width - 1))), max(0.0, min(1.0, float(y) / (height - 1)))]
         for x, y in pts
     ], allow_partial=False)
 

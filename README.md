@@ -79,18 +79,32 @@ railguard prepare \
 railguard audit --manifest data/processed/manifest.csv --out outputs/data_audit.json
 ```
 
+The audit also writes `outputs/data_audit.csv`. If the manifest/dataset is absent, both files are still created with zero counts and `status: BLOCKED_REAL_DATA`.
+
 For **annotations-only exploration**, omit `--images` and pass `--allow-missing-images`. Geometry evaluation still requires images. Parsing checks missing paired CSVs, row counts, bbox validity, and label format. Empty frames are retained.
 
-### Step B — Split by full **sequence**
+### Step B — Select the no-training validation/test protocol
 
 ```bash
 railguard split --manifest data/processed/manifest.csv \
-  --test-sequence red-04-00-front-left \
-  --val-sequence <ANOTHER_EXISTING_SEQUENCE> \
+  --split-mode pretrained_val_test \
+  --calibration-frame red-04-01-front-left/00000 \
   --out data/processed/splits.csv
 ```
 
-Replace both example sequence names with **existing distinct sequences** from your manifest. At least **three independent sequences** are needed for train / val / test; if the chosen subset does not provide enough, extend it or explicitly report a different evaluation protocol. **Never randomly distribute frames of a single sequence** across splits. For cross-station experiments, keep stations disjoint when feasible and document this separately. Fit or select any thresholds **without inspecting the test split**.
+The main protocol uses pretrained COCO models without an internal training set: every `red-00-00*` sequence is validation and every `red-04-01*` sequence is test. Other sequences are marked `excluded`. Replace the calibration frame example with one or more frames selected in advance; these remain listed as `calibration_only` and are removed from evaluation. Fit/select thresholds on validation only and freeze test-camera YAML before scoring.
+
+For optional detector fine-tuning, retain the independent whole-sequence train/validation/test mode:
+
+```bash
+railguard split --manifest data/processed/manifest.csv \
+  --split-mode train_val_test \
+  --test-sequence <EXISTING_TEST_SEQUENCE> \
+  --val-sequence <EXISTING_VALIDATION_SEQUENCE> \
+  --out data/processed/fine_tuning_splits.csv
+```
+
+This optional mode requires at least three independent sequences. **Never randomly distribute frames of one sequence** across splits.
 
 ### Step C — Calibrate each camera (primary method)
 
@@ -155,46 +169,60 @@ railguard train --data data/processed/yolo/data.yaml --weights yolo11n.pt --epoc
 
 This trains a **person detector**, not a new safety-line classifier or a pose network. It requires train/val images with box labels and does not fine-tune `yolo11n-pose.pt`. Training scripts must never access test annotations to tune parameters. The test split may be exported but must **not** be used for fitting.
 
-### Step G — Interactive demo (click/drag calibration)
+### Step G — Interactive Web UI (**RailGuard Studio · HTML5/Canvas**)
 
 ```bash
-# First installation (includes Streamlit and YOLO):
-pip install -e ".[vision,demo,dev]"
-streamlit run app.py
+# Install core + YOLO detection dependencies:
+pip install -e ".[vision,dev]"
+
+# Start RailGuard Studio web server (default port 8502):
+python -m railguard.server
+# or via CLI:
+railguard studio --port 8502
 ```
 
-Open the local Streamlit URL (usually `http://localhost:8501`) and follow the **four visible steps**:
+Open **`http://localhost:8502`** in your browser and follow the interactive workflow:
 
-1. **Upload an RGB image.** Optionally upload an existing camera YAML in the sidebar. The image and imported YAML are associated with the current view; changing either **invalidates the previous approval**.
-2. **Auto Detect L/E** to get a provisional suggestion using `hybrid` (HSV paint cues + Canny/Hough line segments) or other selectable methods. If the algorithm cannot find a pair, it leaves existing points unchanged and displays a warning. You can also start manually with **Clear four points**.
-3. **Edit directly on the image**: click **L0 / L1 / E0 / E1** and click the corresponding location, or **drag an existing colored point**. The yellow/orange line is **L (safety paint)**, blue is **E (platform edge)**, and the translucent polygon is **Z**. Four valid points are mandatory. This works for steep and near-vertical lines; no numeric coordinate entry is needed. **Review L and E visually**: an auto proposal is *not* a geometric ground truth and may select rails or highlights by mistake.
-4. **Confirm, save, and infer**: check the verification box, enter a safe fixed-camera or RailEye3D sequence name, then **Download camera YAML** or **Save to local `configs/<sequence>.yaml`** (on the computer running Streamlit). Saving an existing YAML requires the explicit overwrite checkbox. Only after valid geometry and confirmation does **Run YOLO on this image** become enabled. It displays actual predictions and provides JSON export.
+1. **Upload an RGB station image (`JPG / PNG / WEBP`):** uploading a new image resets previous boundary points and detection results cleanly, waiting for your method choice.
+2. **Choose line detection method (L & E):**
+   - **1. LAB Color + Canny + Hough (`lab_canny_hough`):** adaptive LAB yellow/white paint mask + Canny curb edge detection with projective vanishing-point convergence. Auto-locks points to prevent accidental drag.
+   - **2. Hybrid Region + RANSAC (`hybrid_region_evidence`):** combines HSV/LAB paint cues, RANSAC clustering + Hough candidates, ceiling-rafter filtering, and two-sided brightness drop verification. Auto-locks points.
+   - **3. Manual Mode (`manual`):** unlocks direct click placement and dragging of the four boundary endpoints (`L0`, `L1`, `E0`, `E1`) on the HTML5 canvas.
+3. **Select person detector (M3):** choose `YOLO11 Pose` (Crop-Pose multi-scale ankle detection for both near and distant passengers) or `YOLO11 Detection` (Bounding-Box bottom-center).
+4. **Run Safety Check & Export:** click **Chạy Kiểm Tra An Toàn** to evaluate per-person `DANGER / SAFE / UNKNOWN` status, view annotated detections, and download the PNG overlay or JSON report.
 
-Any **new point edit or new Auto Detect** resets approval and clears stale inference results. Model loading may download weights when first invoked. The auto-detection candidate must **not** be treated as an automatically validated calibration, even if a polygon looks plausible. Camera-specific saved YAML can be used for other frames of that same **stationary camera**, and by the CLI for reproducible evaluation.
-
-Streamlit's native **components v2** is used for direct manipulation (requires `streamlit>=1.56`; your existing `1.67` is compatible). No extra third-party canvas package is required. Run `python -m pytest -q` after updating.
+Run `python -m pytest -q` after updating.
 
 ## 5. Implementation structure
 
 ```text
 RailGuard/
 ├── railguard/
-│   ├── raileye.py        # official CSV parsing, image lookup and audit
-│   ├── geometry.py       # L / E / Z and point-in-polygon checks
-│   ├── boundaries.py     # classical HSV/Canny/Hough candidate lines
-│   ├── calibration.py    # interactive camera-specific line calibration
-│   ├── detection.py      # bbox/pose YOLO adapters and foot-point rules
-│   ├── pipeline.py       # spatial analysis and image overlays
-│   ├── splitting.py      # leakage checks and sequence-level split
-│   ├── metrics.py        # IoU matching and binary metrics
-│   ├── evaluate.py       # per-instance evaluation, failure export
-│   ├── export_yolo.py    # optional person detector data export/training
-│   └── cli.py            # runnable commands
-├── app.py                # Streamlit app with real inference
-├── tests/               # synthetic unit/integration tests
-├── configs/             # per-camera calibration templates
-├── scripts/             # synthetic smoke-test generator
-├── docs/                # protocol and limitations
+│   ├── raileye.py           # official CSV parsing, image lookup and audit
+│   ├── geometry.py          # L / E / Z and point-in-polygon checks
+│   ├── preprocessing.py     # M1 illumination/contrast/noise enhancements
+│   ├── boundaries.py        # M2 LAB/HSV paint masks, Canny/Hough & VP alignment
+│   ├── line_models.py       # RANSAC & collinear segment clustering
+│   ├── calibration.py       # camera-specific line calibration helpers
+│   ├── detection.py         # M3 YOLO bbox/pose adapters + Crop-Pose
+│   ├── foot_refinement.py   # foot-point estimation & refinement
+│   ├── classic_detectors.py # HOG+SVM & MOG2 baselines
+│   ├── pipeline.py          # M4 spatial analysis and image overlays
+│   ├── server.py            # lightweight HTTP backend for RailGuard Studio
+│   ├── studio/
+│   │   └── index.html       # HTML5/Canvas RailGuard Studio web UI
+│   ├── ui_state.py          # UI session state and export helpers
+│   ├── zone_editor.py       # coordinate normalization & YAML persistence
+│   ├── splitting.py         # leakage checks and sequence-level split
+│   ├── metrics.py           # IoU matching and binary metrics
+│   ├── evaluate.py          # per-instance evaluation, failure export
+│   ├── experiments.py       # E1–E5 benchmark runner
+│   ├── export_yolo.py       # optional person detector data export/training
+│   └── cli.py               # runnable CLI commands (including `studio`)
+├── tests/                   # synthetic unit/integration tests
+├── configs/                 # per-camera & M1 configuration templates
+├── scripts/                 # synthetic smoke-test generator
+├── docs/                    # protocol, methodology, experiments & progress
 ├── pyproject.toml
 ├── requirements.txt
 └── README.md
@@ -213,7 +241,7 @@ A short synthetic-data smoke test is available (for **testing code only**, never
 ```bash
 python scripts/make_synthetic_demo.py --out data/synthetic
 railguard prepare --annotations data/synthetic/annotations --images data/synthetic/images --out data/processed/synthetic.csv
-railguard split --manifest data/processed/synthetic.csv --test-sequence red-04-00-front-left --val-sequence red-01-00-front-left --out data/processed/synthetic_split.csv
+railguard split --manifest data/processed/synthetic.csv --split-mode train_val_test --test-sequence red-04-00-front-left --val-sequence red-01-00-front-left --out data/processed/synthetic_split.csv
 railguard evaluate --manifest data/processed/synthetic_split.csv --configs data/synthetic/configs --detector gt --out outputs/synthetic_check
 ```
 

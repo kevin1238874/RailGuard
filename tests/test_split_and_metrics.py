@@ -1,7 +1,7 @@
 import pandas as pd
 import pytest
 from railguard.metrics import binary_metrics, bbox_iou, greedily_match
-from railguard.splitting import assert_no_shared_sequences, split_manifest
+from railguard.splitting import assert_no_shared_sequences, evaluation_subset, split_manifest
 from railguard.detection import Person
 
 
@@ -17,6 +17,48 @@ def test_split_two_sequences_fails():
     df = pd.DataFrame({"sequence": ["a", "b"], "frame": [0, 0]})
     with pytest.raises(ValueError, match=">=3 sequences"):
         split_manifest(df, "b")
+
+
+def test_pretrained_val_test_uses_fixed_prefixes_without_train_sequence():
+    df = pd.DataFrame({
+        "sequence": ["red-00-00-front-left"] * 2 + ["red-04-01-front-left"] * 2 + ["red-02-00-side"],
+        "frame": [0, 15, 0, 15, 0],
+    })
+    out = split_manifest(df, split_mode="pretrained_val_test")
+    assigned = out.groupby("sequence").split.first().to_dict()
+    assert assigned == {
+        "red-00-00-front-left": "val",
+        "red-04-01-front-left": "test",
+        "red-02-00-side": "excluded",
+    }
+    assert "train" not in set(out["split"])
+    assert_no_shared_sequences(out)
+
+
+def test_calibration_only_frames_are_listed_and_excluded_from_evaluation():
+    df = pd.DataFrame({
+        "sequence": ["red-00-00-front-left"] * 2 + ["red-04-01-front-left"] * 2,
+        "frame": [0, 15, 0, 15],
+    })
+    out = split_manifest(
+        df,
+        split_mode="pretrained_val_test",
+        calibration_frames=["red-04-01-front-left/00000"],
+    )
+    calibration = out[out["calibration_only"]]
+    assert calibration[["sequence", "frame"]].drop_duplicates().to_records(index=False).tolist() == [
+        ("red-04-01-front-left", 0)
+    ]
+    assert not calibration["evaluation_eligible"].any()
+    scoreable_test = evaluation_subset(out, "test")
+    assert scoreable_test.frame.unique().tolist() == [15]
+
+
+def test_unknown_calibration_frame_is_rejected():
+    df = pd.DataFrame({"sequence": ["red-00-00-a", "red-04-01-b"], "frame": [0, 0]})
+    with pytest.raises(ValueError, match="not present"):
+        split_manifest(df, split_mode="pretrained_val_test",
+                       calibration_frames=["red-04-01-b/15"])
 
 
 def test_sequence_leakage_detected():

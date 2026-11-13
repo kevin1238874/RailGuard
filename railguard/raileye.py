@@ -8,8 +8,14 @@ The two files pair by *row order*. The parameter file has no object ID.
 from __future__ import annotations
 
 import csv
+from collections import Counter
+import json
 from pathlib import Path
 import re
+from typing import Any
+
+import cv2
+import numpy as np
 import pandas as pd
 
 SEQUENCE_RE = re.compile(r"^red-\d{2}-\d{2}-[A-Za-z0-9_-]+$")
@@ -20,6 +26,20 @@ PERSON_LABELS = frozenset({"adult", "child", "person", "pedestrian"})
 def _rows(path: Path) -> list[list[str]]:
     with path.open(newline="", encoding="utf-8-sig") as handle:
         return [row for row in csv.reader(handle) if row and any(cell.strip() for cell in row)]
+
+
+def parse_bool(value: Any, *, location: str = "boolean value") -> bool:
+    """Parse the boolean spellings used by RailEye3D and CSV round trips."""
+    if isinstance(value, (bool, np.bool_)):
+        return bool(value)
+    if isinstance(value, (int, np.integer)) and value in (0, 1):
+        return bool(value)
+    text = str(value).strip().lower()
+    if text in {"true", "1"}:
+        return True
+    if text in {"false", "0"}:
+        return False
+    raise ValueError(f"{location}: invalid boolean {value!r}")
 
 
 def read_frame(bbox_csv: str | Path, param_csv: str | Path | None = None) -> list[dict]:
@@ -52,10 +72,8 @@ def read_frame(bbox_csv: str | Path, param_csv: str | Path | None = None) -> lis
                 item["occlusion"] = float(values[0])
             except ValueError as exc:
                 raise ValueError(f"{param_csv} row {index + 1}: invalid occlusion") from exc
-            flag = values[1].strip().lower()
-            if flag not in {"true", "false", "1", "0"}:
-                raise ValueError(f"{param_csv} row {index + 1}: invalid boolean {values[1]!r}")
-            item["beyond_safety_line"] = flag in {"true", "1"}
+            item["beyond_safety_line"] = parse_bool(
+                values[1], location=f"{param_csv} row {index + 1}")
         objects.append(item)
     return objects
 
@@ -127,12 +145,14 @@ def make_manifest(annotation_root: str | Path, image_root: str | Path | None = N
 
 
 def summarize_manifest(df: pd.DataFrame) -> dict:
-    person = df[df["object_present"].astype(bool)].copy()
+    present = df["object_present"].map(
+        lambda value: False if pd.isna(value) else parse_bool(value, location="object_present"))
+    person = df[present].copy()
     if not person.empty:
         person = person[person["label"].str.lower().isin(PERSON_LABELS)]
     if not person.empty:
         flags = person["beyond_safety_line"].dropna()
-        positives = int(sum(str(value).strip().lower() in {"true", "1"} for value in flags))
+        positives = int(sum(parse_bool(value, location="beyond_safety_line") for value in flags))
     else:
         positives = 0
     return {"frames": int(df[["sequence", "frame"]].drop_duplicates().shape[0]),
@@ -140,4 +160,149 @@ def summarize_manifest(df: pd.DataFrame) -> dict:
             "stations": sorted(df["station"].unique().tolist()),
             "person_instances": len(person), "unsafe_person_instances": positives,
             "safe_person_instances": len(person) - positives,
-            "labels": {str(k): int(v) for k, v in df.loc[df["object_present"].astype(bool), "label"].value_counts().items()}}
+            "labels": {str(k): int(v) for k, v in df.loc[present, "label"].value_counts().items()}}
+
+
+def blocked_data_audit(reason: str, source: str | Path | None = None) -> dict:
+    """Return an explicit zero-count audit without implying that data was tested."""
+    return {
+        "status": "BLOCKED_REAL_DATA",
+        "reason": reason,
+        "source": "" if source is None else str(source),
+        "sequence_count": 0,
+        "sequences": [],
+        "station_count": 0,
+        "stations": [],
+        "camera_count": 0,
+        "cameras": [],
+        "frames": 0,
+        "empty_frames": 0,
+        "person_instances": 0,
+        "safe_person_instances": 0,
+        "unsafe_person_instances": 0,
+        "labels": {},
+        "occlusion": {"count": 0, "min": None, "max": None, "mean": None},
+        "images": {
+            "referenced": 0,
+            "readable": 0,
+            "missing": 0,
+            "unreadable": 0,
+            "sizes": {},
+            "brightness_mean": None,
+            "brightness_std": None,
+            "brightness_min": None,
+            "brightness_max": None,
+        },
+        "missing_files": {"images": 0, "bbox_csv": 0, "param_csv": 0},
+    }
+
+
+def audit_manifest(df: pd.DataFrame, source: str | Path | None = None) -> dict:
+    """Audit counts and available image properties without inventing missing results."""
+    if df.empty:
+        return blocked_data_audit("Manifest is empty; no RailEye3D data is available.", source)
+
+    required = {"sequence", "station", "frame", "object_present", "label",
+                "occlusion", "beyond_safety_line", "image", "bbox_file", "param_file"}
+    missing_columns = sorted(required - set(df.columns))
+    if missing_columns:
+        raise ValueError(f"Manifest is missing required columns: {missing_columns}")
+
+    summary = summarize_manifest(df)
+    frame_rows = df.drop_duplicates(["sequence", "frame"])
+    present = df["object_present"].map(
+        lambda value: False if pd.isna(value) else parse_bool(value, location="object_present"))
+    people = df[present & df["label"].astype(str).str.lower().isin(PERSON_LABELS)]
+    occlusion = pd.to_numeric(people["occlusion"], errors="coerce").dropna()
+
+    missing_images = unreadable_images = 0
+    sizes: Counter[str] = Counter()
+    brightness: list[float] = []
+    referenced_images = 0
+    for value in frame_rows["image"]:
+        if not isinstance(value, str) or not value.strip():
+            missing_images += 1
+            continue
+        referenced_images += 1
+        path = Path(value)
+        if not path.is_file():
+            missing_images += 1
+            continue
+        image = cv2.imread(str(path))
+        if image is None:
+            unreadable_images += 1
+            continue
+        height, width = image.shape[:2]
+        sizes[f"{width}x{height}"] += 1
+        brightness.append(float(cv2.cvtColor(image, cv2.COLOR_BGR2GRAY).mean()))
+
+    def missing_path_count(column: str) -> int:
+        return int(sum(not isinstance(value, str) or not value.strip() or not Path(value).is_file()
+                       for value in frame_rows[column]))
+
+    image_stats = {
+        "referenced": referenced_images,
+        "readable": int(sum(sizes.values())),
+        "missing": missing_images,
+        "unreadable": unreadable_images,
+        "sizes": dict(sorted(sizes.items())),
+        "brightness_mean": round(float(np.mean(brightness)), 4) if brightness else None,
+        "brightness_std": round(float(np.std(brightness)), 4) if brightness else None,
+        "brightness_min": round(float(np.min(brightness)), 4) if brightness else None,
+        "brightness_max": round(float(np.max(brightness)), 4) if brightness else None,
+    }
+    real_data_ready = image_stats["readable"] > 0
+    return {
+        "status": "READY" if real_data_ready else "BLOCKED_REAL_DATA",
+        "reason": "" if real_data_ready else "No readable real RGB images are referenced by the manifest.",
+        "source": "" if source is None else str(source),
+        "sequence_count": len(summary["sequences"]),
+        "sequences": summary["sequences"],
+        "station_count": len(summary["stations"]),
+        "stations": summary["stations"],
+        "camera_count": len(summary["sequences"]),
+        "cameras": summary["sequences"],
+        "frames": summary["frames"],
+        "empty_frames": int((~present).groupby([df["sequence"], df["frame"]]).all().sum()),
+        "person_instances": summary["person_instances"],
+        "safe_person_instances": summary["safe_person_instances"],
+        "unsafe_person_instances": summary["unsafe_person_instances"],
+        "labels": summary["labels"],
+        "occlusion": {
+            "count": int(len(occlusion)),
+            "min": float(occlusion.min()) if len(occlusion) else None,
+            "max": float(occlusion.max()) if len(occlusion) else None,
+            "mean": round(float(occlusion.mean()), 4) if len(occlusion) else None,
+        },
+        "images": image_stats,
+        "missing_files": {
+            "images": missing_images + unreadable_images,
+            "bbox_csv": missing_path_count("bbox_file"),
+            "param_csv": missing_path_count("param_file"),
+        },
+    }
+
+
+def write_data_audit(summary: dict, json_path: str | Path,
+                     csv_path: str | Path | None = None) -> tuple[Path, Path]:
+    """Write the same audit as structured JSON and a flat metric/value CSV."""
+    json_path = Path(json_path)
+    csv_path = Path(csv_path) if csv_path is not None else json_path.with_suffix(".csv")
+    json_path.parent.mkdir(parents=True, exist_ok=True)
+    csv_path.parent.mkdir(parents=True, exist_ok=True)
+    json_path.write_text(json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    rows: list[dict[str, Any]] = []
+
+    def flatten(prefix: str, value: Any) -> None:
+        if isinstance(value, dict):
+            for key, item in value.items():
+                flatten(f"{prefix}.{key}" if prefix else str(key), item)
+        elif isinstance(value, list):
+            rows.append({"metric": prefix, "value": json.dumps(value, ensure_ascii=False)})
+        else:
+            rows.append({"metric": prefix, "value": value})
+
+    flatten("", summary)
+    pd.DataFrame(rows, columns=["metric", "value"]).to_csv(csv_path, index=False)
+    return json_path, csv_path

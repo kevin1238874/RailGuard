@@ -4,3 +4,4 @@ coordinates: normalized
 zone:
   safety_line: [[0.0, 0.58], [1.0, 0.58]]
   platform_edge: [[0.0, 0.73], [1.0, 0.73]]
+  unsafe_side: beyond_platform_edge

@@ -1,1 +1,1 @@
--e .[vision,demo,dev]
+-e .[vision,dev]

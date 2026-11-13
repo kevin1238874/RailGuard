@@ -2,21 +2,23 @@
 
 - `raileye.py`: strict official-format CSV parser and sequence/frame manifest. Record alignment is positional, not by object ID.
 - `geometry.py` + `config.py`: normalized/pixel L and E lines; interpolated polygon Z. Coordinates are defined in the input image's native resolution. No metric camera calibration is assumed.
-- `boundaries.py`: optional HSV yellow/white paint masks, Canny edges, Hough segments, orientation-independent consensus fit (handles steep and near-vertical lines). Returns an *uncertain* status rather than inventing a zone if a sufficiently parallel candidate pair is not found.
-- `detection.py`: lazy Ultralytics YOLO dependency; COCO person class 0; bbox-bottom-center or ankle (COCO indices 15 and 16) foot references, with explicit fallback.
+- `boundaries.py`: automatic platform line estimation via:
+  - `lab_canny_hough` (LAB luminance/yellow-channel filtering with `b >= 142`, Canny edges, Hough segments, ceiling/roof rafter suppression, and vanishing-point perspective alignment across multiple edge points weighted toward foreground points), and
+  - `hybrid_region_evidence` (region brightness drop + RANSAC consensus fitting with vanishing-point intersection).
+  - Returns an *uncertain* status rather than inventing a zone if a valid pair is not found.
+- `detection.py`: lazy Ultralytics YOLO dependency; COCO person class 0; bbox-bottom-center or ankle (COCO indices 15 and 16) foot references, with explicit fallback, plus tiled/Crop-Pose inference for small distant figures.
 - `pipeline.py`: geometric classification with tri-state `True`/`False`/`None` and OpenCV visualization.
-- `splitting.py`, `evaluate.py`, `metrics.py`: sequence-disjoint test split and IoU matching; false-positive/false-negative accounting and CSV error export.
+- `splitting.py`, `evaluate.py`, `metrics.py`: fixed-prefix pretrained val/test protocol, optional sequence-disjoint fine-tuning split, explicit calibration-only exclusions, IoU matching, false-positive/false-negative accounting, and CSV error export.
 - `export_yolo.py`: optional **person detector** training export; frame-level negatives retained. No pose-network fine-tuning is provided.
 - `zone_editor.py`: pure, tested normalization/validation and guarded per-camera YAML persistence.
-- `web_editor.py`: Streamlit components v2 DOM/SVG endpoint placement and dragging. Coordinates return as one-shot events. Uploaded image data is used only as an image source, not rendered as HTML.
-- `app.py`: four-step image upload → automatic provisional zone suggestion or YAML import → direct correction and explicit approval → YAML download/local save → real YOLO inference (not mocked). Geometry edits reset approval and stale predictions.
+- `ui_state.py`: framework-agnostic workspace state machine managing image uploads, auto-proposal lock states, manual point editing overrides, and stale prediction resets.
+- `server.py` + `studio/index.html`: pure Python `ThreadingHTTPServer` (`railguard studio` / `python -m railguard.server`) serving the HTML5/Canvas **RailGuard Studio** frontend and JSON endpoints (`/api/detect-boundaries`, `/api/infer`). Replaces legacy Streamlit UI (`app.py`, `web_editor.py`).
 
 > Model downloads and original image downloads are deliberately **not** performed by unit tests. The included synthetic PNGs are created only after running the smoke-test generator and have no scientific validity as a benchmark.
 
 
-## Interactive viewport and conservative auto-boundary correction
+## Interactive RailGuard Studio & conservative auto-boundary estimation
 
-- Streamlit custom components v2 provides a bounded image viewport. Independent +/− buttons and wheel events zoom the image without resizing the browser page; Pan mode drags the image, Fit resets it.
-- Point editing is always performed in normalized *image* coordinates after zoom/pan transformations. The editor returns the current zoom and center with edit events to preserve viewport continuity on Python reruns.
-- HSV/Hough auto-proposals now reject white train reflections which have a dark track on one side. Candidate edges are assessed for a bright platform interior and dark outside. A median segmented-stripe offset recenters the safety boundary between the two sides of a painted stripe. Results remain non-calibrated estimates requiring human confirmation.
-- Browser smoke tests cover click, marker drag, zoom, wheel, fit and pan. Unit tests include a synthetic scene with narrow platform paint, a dark track gap and misleading bright train reflections.
+- `railguard/studio/index.html` provides a dark-theme 3-column HTML5 Canvas workspace with bounded zoom/pan/Fit controls, explicit image upload state resets, auto-detect lock mode (preventing accidental edits to automated L/E lines), and unlockable manual 4-point (`L0`, `L1`, `E0`, `E1`) dragging.
+- Auto-boundary algorithms extend detected near/mid/far edge evidence to full viewport boundaries via vanishing-point perspective alignment and multi-point weighted interpolation so partial corner gaps do not leave unclipped danger polygons.
+- Candidate boundaries reject dark-track/bright-train reflections and overhead ceiling rafters, and require human verification or manual adjustment when an automatic method fails rather than emitting fabricated overlays.

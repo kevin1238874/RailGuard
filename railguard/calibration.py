@@ -7,7 +7,7 @@ from __future__ import annotations
 from pathlib import Path
 import cv2
 import yaml
-from .geometry import HazardZone, Segment
+from .geometry import HazardZone, Segment, UNSAFE_SIDE_CONVENTION
 
 
 def calibrate(image_file: str, output: str) -> Path:
@@ -16,7 +16,7 @@ def calibrate(image_file: str, output: str) -> Path:
         raise FileNotFoundError(image_file)
     h, w = image.shape[:2]
     clicks: list[tuple[int, int]] = []
-    window = "RailGuard - L0 L1 E0 E1; S=save, U=undo, R=reset, ESC=cancel"
+    window = "RailGuard - L0 L1 E0 E1 (unsafe is beyond E); S=save, U=undo, R=reset, ESC=cancel"
 
     def on_click(event, x, y, _flags, _params):
         if event == cv2.EVENT_LBUTTONDOWN and len(clicks) < 4:
@@ -49,7 +49,8 @@ def calibrate(image_file: str, output: str) -> Path:
                 zone.polygon()
                 cfg = {"coordinates": "normalized", "zone": {
                     "safety_line": [[round(p[0]/(w-1), 6), round(p[1]/(h-1), 6)] for p in clicks[:2]],
-                    "platform_edge": [[round(p[0]/(w-1), 6), round(p[1]/(h-1), 6)] for p in clicks[2:]]}}
+                    "platform_edge": [[round(p[0]/(w-1), 6), round(p[1]/(h-1), 6)] for p in clicks[2:]],
+                    "unsafe_side": UNSAFE_SIDE_CONVENTION}}
                 target = Path(output)
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_text(yaml.safe_dump(cfg, sort_keys=False), encoding="utf-8")

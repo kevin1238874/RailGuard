@@ -9,8 +9,8 @@ Does estimating the location of a person's feet from pose keypoints improve unsa
 1. Obtain original RGB frames from the dataset authors under the applicable licence.
 2. Parse `bboxes` and `params` by matching sequence and frame, then **pairing rows in the same order**.
 3. Audit frame count, sequence IDs, class balance, unsafe fraction and image resolutions before splitting.
-4. Use **whole-sequence** train/val/test partitions and save the resulting `splits.csv` before fitting any thresholds. Do not let frames from one sequence enter multiple subsets.
-5. Calibrate a single L/E geometry per camera using separate calibration frames, **not** by optimizing over test labels or individual test frames. Freeze calibration files before test scoring.
+4. For the main no-training protocol, use pretrained COCO weights, assign every `red-00-00*` sequence to validation and every `red-04-01*` sequence to test, and create no internal train split. The separate `train_val_test` mode is only for optional fine-tuning and still uses whole sequences.
+5. Predeclare calibration-only frame identities in the split manifest. Calibrate a single L/E geometry per camera using those separate frames, **not** by optimizing over test labels or scored test frames. Freeze calibration files before test scoring; the evaluator excludes every `calibration_only` row.
 6. If feasible, run an additional cross-station evaluation in which all sequences from a held-out station are test-only. Describe any overlap of camera/viewpoints across splits.
 
 ## Comparison table template

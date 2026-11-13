@@ -11,9 +11,9 @@ import pandas as pd
 from .config import get_zone, load_config
 from .detection import Person, YOLODetector
 from .metrics import binary_metrics, greedily_match
-from .pipeline import analyze, draw
+from .pipeline import aggregate_frame, analyze, draw
 from .raileye import PERSON_LABELS
-from .splitting import assert_no_shared_sequences
+from .splitting import assert_no_shared_sequences, evaluation_subset
 
 
 def _gt_instances(rows: pd.DataFrame) -> tuple[list[Person], list[bool], list[float | None]]:
@@ -35,26 +35,30 @@ def evaluate_manifest(manifest: str | Path, output_dir: str | Path, config_dir: 
                       split: str = "test", detector: str = "gt", weights: str | None = None,
                       boundary_method: str = "color_hough", auto_boundary: bool = False,
                       pose_fallback: str = "bbox", confidence: float = 0.25,
-                      iou_threshold: float = 0.5, sample_visualizations: int = 12) -> dict:
+                      iou_threshold: float = 0.5, sample_visualizations: int = 12,
+                      imgsz: int = 640, nms_iou: float = 0.7,
+                      device: str | int | None = None) -> dict:
     df = pd.read_csv(manifest, dtype={"object_id": str})
     if "object_present" not in df.columns:
         raise ValueError("Missing 'object_present' column; recreate the manifest with prepare")
     if "split" not in df.columns:
         raise ValueError("Run split first; evaluation requires an explicit held-out split")
     assert_no_shared_sequences(df)
-    df = df[df["split"] == split]
+    df = evaluation_subset(df, split)
     if df.empty:
-        raise ValueError(f"No rows in split={split!r}")
+        raise ValueError(f"No evaluation rows in split={split!r} after excluding calibration-only frames")
     if detector not in {"gt", "yolo", "pose"}:
         raise ValueError("Detector must be gt, yolo or pose")
     if not 0 < iou_threshold <= 1:
         raise ValueError("IoU threshold must lie in (0,1]")
     model = None if detector == "gt" else YOLODetector(
-        "pose" if detector == "pose" else "bbox", weights, confidence)
+        "pose" if detector == "pose" else "bbox", weights, confidence, device,
+        imgsz=imgsz, iou=nms_iou)
     output = Path(output_dir)
     output.mkdir(parents=True, exist_ok=True)
     scored_y, scored_pred, conditional_y, conditional_pred, records = [], [], [], [], []
     frame_y, frame_pred = [], []
+    frame_unknown_count = 0
     matched_count = missed_count = extra_count = abstained_count = unknown_count = 0
     scored_frames = no_zone_frames = 0
     for (sequence, frame), rows in df.groupby(["sequence", "frame"], sort=True):
@@ -77,8 +81,16 @@ def evaluate_manifest(manifest: str | Path, output_dir: str | Path, config_dir: 
             image, observed, zone, foot_method="pose" if detector == "pose" else "bbox",
             auto_boundary=auto_boundary, boundary_method=boundary_method,
             paint_color=config.get("paint_color", "both"), pose_fallback=pose_fallback)
-        frame_y.append(int(any(labels)))
-        frame_pred.append(int(any(dec.intrusion is True for dec in decisions)))
+        observation_status = ("confirmed_no_people" if detector == "gt" and not observed
+                              else "no_detections" if not observed else "detections_complete")
+        frame_decision = aggregate_frame(
+            decisions, observation_status=observation_status,
+            calibration_status=status, calibration_valid=zone is not None)
+        if frame_decision.status == "UNKNOWN":
+            frame_unknown_count += 1
+        else:
+            frame_y.append(int(any(labels)))
+            frame_pred.append(int(frame_decision.status == "DANGER"))
         if zone is None:
             # Undefined geometry is not a negative result. It impacts coverage.
             no_zone_frames += 1
@@ -89,7 +101,10 @@ def evaluate_manifest(manifest: str | Path, output_dir: str | Path, config_dir: 
                 records.append({"sequence": sequence, "frame": frame, "object_id": person.object_id,
                                 "truth": int(labels[i]), "prediction": "unknown_zone",
                                 "error": bool(labels[i]), "foot_source": "none", "iou": 0,
-                                "occlusion": occlusion[i], "zone_status": status})
+                                "occlusion": occlusion[i], "zone_status": status,
+                                "frame_status": frame_decision.status,
+                                "frame_reason": frame_decision.reason,
+                                "reason": "missing_calibration"})
             continue
         scored_frames += 1
         matches, missed, extra = greedily_match(gt, observed, threshold=iou_threshold)
@@ -109,7 +124,10 @@ def evaluate_manifest(manifest: str | Path, output_dir: str | Path, config_dir: 
                             "truth": label, "prediction": "unknown" if decision.intrusion is None else int(decision.intrusion),
                             "error": decision.intrusion is None or label != decision.intrusion,
                             "foot_source": decision.foot_source, "iou": overlap,
-                            "occlusion": occlusion[gt_idx], "zone_status": status})
+                            "occlusion": occlusion[gt_idx], "zone_status": status,
+                            "frame_status": frame_decision.status,
+                            "frame_reason": frame_decision.reason,
+                            "reason": decision.reason})
         for gt_idx in missed:
             label = int(labels[gt_idx])
             if label:
@@ -117,7 +135,8 @@ def evaluate_manifest(manifest: str | Path, output_dir: str | Path, config_dir: 
             records.append({"sequence": sequence, "frame": frame, "object_id": gt[gt_idx].object_id,
                             "truth": label, "prediction": "missed_detection", "error": bool(label),
                             "foot_source": "none", "iou": 0, "occlusion": occlusion[gt_idx],
-                            "zone_status": status})
+                            "zone_status": status, "frame_status": frame_decision.status,
+                            "frame_reason": frame_decision.reason, "reason": "missed_detection"})
         for pred_idx in extra:
             decision = decisions[pred_idx]
             if decision.intrusion is True:
@@ -125,16 +144,25 @@ def evaluate_manifest(manifest: str | Path, output_dir: str | Path, config_dir: 
             records.append({"sequence": sequence, "frame": frame, "object_id": "<unmatched_prediction>",
                             "truth": 0, "prediction": "unknown" if decision.intrusion is None else int(decision.intrusion),
                             "error": bool(decision.intrusion), "foot_source": decision.foot_source,
-                            "iou": 0, "occlusion": None, "zone_status": status})
+                            "iou": 0, "occlusion": None, "zone_status": status,
+                            "frame_status": frame_decision.status,
+                            "frame_reason": frame_decision.reason,
+                            "reason": decision.reason})
         if scored_frames <= sample_visualizations:
             cv2.imwrite(str(output / f"{sequence}_{int(frame):05d}.jpg"),
-                        draw(image, decisions, zone, status))
+                        draw(image, decisions, zone,
+                             f"frame={frame_decision.status}; calibration={status}"))
     if not scored_y:
         raise RuntimeError("No scored positives/negatives; check input and calibration")
     result = binary_metrics(scored_y, scored_pred)
     div = lambda a, b: a / b if b else 0.0
     result.update({"split": split, "detector": detector, "iou_threshold": iou_threshold,
-                   "frame_level_alert_metrics": binary_metrics(frame_y, frame_pred),
+                   "weights": weights, "conf": confidence, "imgsz": imgsz,
+                   "nms_iou": nms_iou, "device": device,
+                   "frame_level_alert_metrics": (binary_metrics(frame_y, frame_pred)
+                                                 if frame_y else None),
+                   "unknown_frames": frame_unknown_count,
+                   "frame_metric_coverage": div(len(frame_y), len(frame_y) + frame_unknown_count),
                    "matched_boxes": matched_count, "missed_boxes": missed_count,
                    "extra_boxes": extra_count,
                    "det_precision": div(matched_count, matched_count + extra_count),
@@ -143,6 +171,8 @@ def evaluate_manifest(manifest: str | Path, output_dir: str | Path, config_dir: 
                    "abstained_gt_instances": abstained_count, "unknown_pose_instances": unknown_count,
                    "conditional_metrics": binary_metrics(conditional_y, conditional_pred) if conditional_y else None,
                    "note": "End-to-end unsafe F1: unmatched/unknown positive GT count as FN. "
+                           "UNKNOWN is exported explicitly and never used as a SAFE frame; frame alert metrics "
+                           "are conditional on non-UNKNOWN frames. "
                            "Unmatched unsafe predictions count as FP. Undetected negatives excluded from TN; "
                            "interpret accuracy with caution. "
                            "RailEye3D beyond_safety_line is an annotation label, not a line coordinate."})

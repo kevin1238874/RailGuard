@@ -2,6 +2,21 @@
 import numpy as np
 
 
+FAILURE_CATEGORIES = (
+    "occlusion", "small_person", "motion_blur", "near_train_door",
+    "missing_feet", "illumination_extreme", "camera_tilt",
+)
+
+
+def validate_failure_categories(categories) -> tuple[str, ...]:
+    """Validate and deduplicate the fixed P3 failure taxonomy."""
+    result = tuple(dict.fromkeys(str(category) for category in categories))
+    unknown = sorted(set(result) - set(FAILURE_CATEGORIES))
+    if unknown:
+        raise ValueError(f"Unknown failure categories: {', '.join(unknown)}")
+    return result
+
+
 def binary_metrics(truth, predicted) -> dict:
     a=np.asarray(truth,dtype=int)
     b=np.asarray(predicted,dtype=int)
