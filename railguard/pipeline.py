@@ -225,9 +225,11 @@ def draw(image: np.ndarray, decisions: list[Decision], zone: HazardZone | None,
     h, w = canvas.shape[:2]
     if zone is not None:
         try:
-            poly = zone.corridor_polygon(w, h).astype(np.int32)
-        except Exception:
-            poly = zone.polygon().astype(np.int32)
+            poly = np.round(zone.corridor_polygon(w, h)).astype(np.int32)
+        except (TypeError, ValueError, cv2.error):
+            poly = np.zeros((0, 2), np.int32)
+        if len(poly) < 3:
+            poly = np.round(zone.polygon()).astype(np.int32)
         overlay = canvas.copy()
         cv2.fillPoly(overlay, [poly], (0, 160, 240))
         cv2.addWeighted(overlay, 0.28, canvas, 0.72, 0, canvas)

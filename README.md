@@ -61,7 +61,7 @@ Python **3.10–3.12** recommended. For example, on Windows PowerShell:
 py -3.11 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
-pip install -e ".[vision,demo,dev]"
+pip install -e ".[vision,dev]"
 python -m pytest -q
 ```
 
@@ -233,6 +233,8 @@ RailGuard/
 - **Primary comparison:** identical held-out frames, manual L/E calibration, same IoU matching threshold (default 0.5), and fixed weights, confidence and fallback policy.
 - **Ablations:** geometry (manual vs auto-boundary), foot proxy (bbox center vs ankles), pose missing-keypoint fallback, detection confidence, IoU threshold.
 - **Failure analysis:** occlusion (`degree_of_occlusion`), perspective, cropped feet, incorrect person boxes, station/camera shifts, boundary ambiguity, and violations near L/E.
+- **Crop-Pose is opt-in:** `YOLODetector(..., enable_crop_pose=True)` adds a second detection model (`crop_pose_det_weights`, default `yolo11n.pt`) and re-runs pose on crops of people the pose model missed. CLI/evaluation use plain pose by default; Studio enables Crop-Pose explicitly. Every person records `crop_pose` / `crop_pose_det_weights` in its metadata, so report it as a separate condition.
+- **OpenCV version:** use `opencv-python<5` (as pinned). OpenCV 5 removed `cv2.HOGDescriptor` from core, so the B1 HOG+SVM baseline raises a clear error there; the rest of the pipeline is compatible.
 - **Caveats:** class imbalance, ground-truth annotation noise, lack of physical camera calibration, boundary placement bias, and low confidence for heavily occluded subjects. Human line calibration may introduce bias: create it using designated calibration frames only and freeze it before test evaluation.
 - **Metric caution:** a low violation prevalence makes recall/precision/F1 more meaningful than accuracy. Separate unsafe classification from detector localization when interpreting causes of errors.
 

@@ -5,7 +5,8 @@ import base64
 import json
 import os
 import sys
-from http.server import BaseHTTPRequestHandler, HTTPServer
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
@@ -20,14 +21,39 @@ from railguard.preprocessing import apply_pipeline
 from railguard.zone_editor import config_from_points, points_from_zone
 
 STUDIO_DIR = Path(__file__).parent / "studio"
+MAX_BODY_BYTES = 64 * 1024 * 1024  # base64 images are ~4/3 of the file size
+
+_DETECTORS: dict[tuple, YOLODetector] = {}
+_DETECTOR_LOCK = threading.Lock()
+
+
+def _get_detector(kind: str, conf: float) -> YOLODetector:
+    """Load each YOLO model once per process instead of on every request."""
+    key = (kind, round(conf, 4))
+    with _DETECTOR_LOCK:
+        if key not in _DETECTORS:
+            if kind == "pose":
+                # Studio advertises Crop-Pose, so it is enabled explicitly here
+                # (and recorded in each person's metadata), never implicitly.
+                _DETECTORS[key] = YOLODetector(
+                    "pose", weights="yolo11n-pose.pt", confidence=conf, imgsz=640,
+                    enable_crop_pose=True, crop_pose_det_weights="yolo11n.pt")
+            else:
+                _DETECTORS[key] = YOLODetector("bbox", weights="yolo11n.pt", confidence=conf, imgsz=640)
+        return _DETECTORS[key]
 
 
 def _decode_b64_image(data_uri: str) -> np.ndarray:
+    if not isinstance(data_uri, str) or not data_uri:
+        raise ValueError("image must be a non-empty base64 string or data URI")
     if "," in data_uri:
         data_uri = data_uri.split(",", 1)[1]
     raw = base64.b64decode(data_uri)
     arr = np.frombuffer(raw, dtype=np.uint8)
-    return cv2.imdecode(arr, cv2.IMREAD_COLOR)
+    image = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+    if image is None:
+        raise ValueError("Could not decode the uploaded image (expected JPG/PNG/WEBP)")
+    return image
 
 
 class RailGuardHandler(BaseHTTPRequestHandler):
@@ -36,16 +62,10 @@ class RailGuardHandler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
-        self.send_header("Access-Control-Allow-Origin", "*")
+        # No CORS headers: Studio is served from this same origin, and other
+        # websites open in the browser must not drive this local server.
         self.end_headers()
         self.wfile.write(body)
-
-    def do_OPTIONS(self):
-        self.send_response(200)
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
-        self.end_headers()
 
     def do_GET(self):
         if self.path == "/" or self.path.startswith("/index.html"):
@@ -64,10 +84,18 @@ class RailGuardHandler(BaseHTTPRequestHandler):
             self.end_headers()
 
     def do_POST(self):
-        content_len = int(self.headers.get("Content-Length", 0))
-        body = self.rfile.read(content_len).decode("utf-8")
         try:
-            req = json.loads(body)
+            content_len = int(self.headers.get("Content-Length", 0))
+        except ValueError:
+            content_len = -1
+        if content_len <= 0 or content_len > MAX_BODY_BYTES:
+            self._send_json({"error": "Missing or too large request body"}, 413)
+            return
+        if not self.headers.get("Content-Type", "").startswith("application/json"):
+            self._send_json({"error": "Content-Type must be application/json"}, 415)
+            return
+        try:
+            req = json.loads(self.rfile.read(content_len).decode("utf-8"))
         except Exception as err:
             self._send_json({"error": f"Invalid JSON: {err}"}, 400)
             return
@@ -101,14 +129,12 @@ class RailGuardHandler(BaseHTTPRequestHandler):
                 preproc = req.get("preproc", "raw")
                 proc_img = apply_pipeline(img, [preproc]) if preproc != "raw" else img
 
-                if "pose" in det_type.lower():
-                    det = YOLODetector("pose", weights="yolo11n-pose.pt", confidence=conf, imgsz=640)
+                if not 0 <= conf <= 1:
+                    raise ValueError("confidence must lie in [0, 1]")
+                foot_m = "pose" if "pose" in str(det_type).lower() else "bbox"
+                det = _get_detector(foot_m, conf)
+                with _DETECTOR_LOCK:  # Ultralytics models are not thread-safe
                     people = det.predict(proc_img)
-                    foot_m = "pose"
-                else:
-                    det = YOLODetector("bbox", weights="yolo11n.pt", confidence=conf, imgsz=640)
-                    people = det.predict(proc_img)
-                    foot_m = "bbox"
 
                 decisions, zone_used, cal_status = analyze(proc_img, people, zone, foot_method=foot_m)
                 frame = aggregate_frame(
@@ -134,7 +160,7 @@ class RailGuardHandler(BaseHTTPRequestHandler):
 
 
 def run_studio_server(port: int = 8502, host: str = "127.0.0.1"):
-    server = HTTPServer((host, port), RailGuardHandler)
+    server = ThreadingHTTPServer((host, port), RailGuardHandler)
     print(f"🚀 RailGuard Studio Pro đang chạy tại: http://{host}:{port}")
     try:
         server.serve_forever()

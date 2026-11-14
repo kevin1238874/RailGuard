@@ -5,6 +5,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from conftest import requires_hog
 from railguard.classic_detectors import (
     AlwaysUnsafeBaseline, FrameLevelUnsafePrediction, HOGSVMDetector,
     MOG2BlobDetector,
@@ -56,6 +57,7 @@ def test_b0_is_frame_level_only_and_never_fabricates_bbox():
     assert not isinstance(result, list) and not hasattr(result, "bbox")
 
 
+@requires_hog
 def test_b1_empty_dark_bright_and_mocked_multi_person_are_safe_unified_outputs():
     detector = HOGSVMDetector()
     for value in (0, 255):
@@ -134,6 +136,7 @@ def test_footpoint_refinement_stays_in_image_bbox_and_local_roi():
     assert all(20 <= x <= 45 and 10 <= y <= 55 for x, y in points)
 
 
+@requires_hog
 def test_benchmark_people_help_and_synthetic_artifacts(tmp_path, capsys):
     with pytest.raises(SystemExit) as exc:
         main(["benchmark-people", "--help"])

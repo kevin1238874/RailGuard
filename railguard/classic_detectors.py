@@ -70,6 +70,10 @@ class HOGSVMDetector:
         self.win_stride, self.padding = tuple(win_stride), tuple(padding)
         self.scale, self.hit_threshold = float(scale), float(hit_threshold)
         self.nms_threshold, self.min_confidence = float(nms_threshold), float(min_confidence)
+        if hog is None and not hasattr(cv2, "HOGDescriptor"):
+            raise RuntimeError(
+                "cv2.HOGDescriptor is unavailable in this OpenCV build (it was removed "
+                "from OpenCV 5 core); install opencv-python<5 to run the B1 HOG+SVM baseline")
         self.hog = hog or cv2.HOGDescriptor()
         if hog is None:
             self.hog.setSVMDetector(cv2.HOGDescriptor_getDefaultPeopleDetector())

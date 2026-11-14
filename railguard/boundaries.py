@@ -98,7 +98,8 @@ def _candidate_segments(image: np.ndarray, mode: str, color: str, clahe: bool,
         return []
     segments = []
     min_len = max(20.0, min(h, w) * .09)
-    for x0, y0, x1, y1 in raw[:, 0, :]:
+    # OpenCV 4 returns (N, 1, 4); OpenCV 5 returns (N, 4).
+    for x0, y0, x1, y1 in np.asarray(raw).reshape(-1, 4):
         # Khử các đoạn ngang ở sát đỉnh nóc nhà/bầu trời
         if max(y0, y1) < min(h, w) * 0.22 and abs(y1 - y0) < abs(x1 - x0) * 0.35:
             continue
