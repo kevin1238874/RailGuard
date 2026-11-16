@@ -141,6 +141,55 @@ def gamma(image: np.ndarray, gamma: float = 1.0) -> np.ndarray:
     return cv2.LUT(image, table)
 
 
+@register_preprocessor("highlight_compress", "glare_suppress")
+def highlight_compress(image: np.ndarray, rolloff: float = 165.0,
+                       comp_slope: float = 0.42, detail_boost: float = 1.1,
+                       chroma_boost: float = 0.35, clahe_clip: float = 2.2) -> np.ndarray:
+    """Compress overexposed highlights and recover washed-out local structure in LAB."""
+    image = _validate_image(image)
+    rolloff = float(rolloff)
+    comp_slope = float(comp_slope)
+    if not (0.0 <= rolloff < 255.0) or not (0.0 <= comp_slope <= 1.0):
+        raise ValueError("rolloff must be in [0, 255) and comp_slope in [0, 1]")
+    lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
+    l_ch, a_ch, b_ch = cv2.split(lab)
+    lf = l_ch.astype(np.float32)
+    hi_mask = np.clip((lf - rolloff) / max(255.0 - rolloff, 1.0), 0.0, 1.0)
+    sigma = max(12.0, 0.03 * min(image.shape[:2]))
+    illum = cv2.GaussianBlur(lf, (0, 0), sigma)
+    detail = lf - illum
+    comp = np.where(lf > rolloff, rolloff + (lf - rolloff) * comp_slope, lf)
+    l_rec = np.clip(comp + detail * (1.0 + float(detail_boost) * hi_mask), 0.0, 255.0).astype(np.uint8)
+    if float(clahe_clip) > 0:
+        l_eq = cv2.createCLAHE(clipLimit=float(clahe_clip), tileGridSize=(8, 8)).apply(l_rec)
+        l_out = np.clip(np.rint(0.50 * l_rec + 0.50 * l_eq), 0, 255).astype(np.uint8)
+    else:
+        l_out = l_rec
+    gain = 1.0 + float(chroma_boost) * hi_mask
+    a_out = np.clip(np.rint(128.0 + (a_ch.astype(np.float32) - 128.0) * gain), 0, 255).astype(np.uint8)
+    b_out = np.clip(np.rint(128.0 + (b_ch.astype(np.float32) - 128.0) * gain), 0, 255).astype(np.uint8)
+    return cv2.cvtColor(cv2.merge([l_out, a_out, b_out]), cv2.COLOR_LAB2BGR)
+
+
+@register_preprocessor("exposure_fusion", "mertens_fusion")
+def exposure_fusion(image: np.ndarray, under_gamma: float = 2.0,
+                    clahe_clip: float = 2.2) -> np.ndarray:
+    """Single-image virtual multi-exposure Mertens fusion for high-glare scenes."""
+    image = _validate_image(image)
+    norm_img = image.astype(np.float32) / 255.0
+    dark_arr = np.clip(np.rint(np.power(norm_img, float(under_gamma)) * 255.0), 0, 255).astype(np.uint8)
+    e_dark = clahe(dark_arr, clip_limit=float(clahe_clip), color_space="lab").astype(np.float32) / 255.0
+    e_mid = clahe(image, clip_limit=max(1.0, float(clahe_clip) * 0.9), color_space="lab").astype(np.float32) / 255.0
+    fused = cv2.createMergeMertens(contrast_weight=1.0, saturation_weight=0.8, exposure_weight=1.0).process(
+        [norm_img, e_dark, e_mid]
+    )
+    lo, hi = np.percentile(fused, (0.5, 99.5))
+    if float(hi - lo) <= 1e-4:
+        return image.copy()
+    scaled = (fused - lo) / float(hi - lo)
+    return np.clip(np.rint(scaled * 255.0), 0, 255).astype(np.uint8)
+
+
 DEFAULT_M1_CONFIG: dict[str, Any] = {
     "version": 1,
     "seed": 0,
@@ -303,7 +352,8 @@ def make_contact_sheet(original: np.ndarray, processed: np.ndarray, runtime_ms: 
 
 __all__ = [
     "PREPROCESSORS", "DEFAULT_M1_CONFIG", "apply_pipeline", "clahe",
-    "compute_quality_flags", "default_m1_config", "gamma", "gaussian_blur",
-    "hist_eq", "identity", "make_contact_sheet", "median_blur",
-    "register_preprocessor", "resolve_pipeline",
+    "compute_quality_flags", "default_m1_config", "exposure_fusion", "gamma",
+    "gaussian_blur", "highlight_compress", "hist_eq", "identity",
+    "make_contact_sheet", "median_blur", "register_preprocessor",
+    "resolve_pipeline",
 ]
