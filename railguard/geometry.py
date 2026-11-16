@@ -207,6 +207,44 @@ class HazardZone:
         d_e = d_e_raw * (-1.0 if safe_reference > 0 else 1.0)
         return float(d_l), float(d_e)
 
+    def observable_horizon_y(self, width: int, height: int) -> float | None:
+        """Return visible horizon y-clip when L and E converge to a forward VP inside frame."""
+        if width < 2 or height < 2:
+            return None
+        vp = _line_intersection(self.safety_line, self.platform_edge)
+        if vp is None:
+            return None
+        s_dx = abs(self.safety_line.b[0] - self.safety_line.a[0])
+        s_dy = abs(self.safety_line.b[1] - self.safety_line.a[1])
+        e_dx = abs(self.platform_edge.b[0] - self.platform_edge.a[0])
+        e_dy = abs(self.platform_edge.b[1] - self.platform_edge.a[1])
+        if s_dy < s_dx * 0.4 or e_dy < e_dx * 0.4:
+            return None
+        if abs(self.safety_line.b[1] - self.safety_line.a[1]) < 1e-6 or abs(self.platform_edge.b[1] - self.platform_edge.a[1]) < 1e-6:
+            return None
+        y_mid = 0.25 * (self.safety_line.a[1] + self.safety_line.b[1]
+                        + self.platform_edge.a[1] + self.platform_edge.b[1])
+        if not (0.0 <= vp[1] < y_mid and vp[1] < float(height - 1)):
+            return None
+        slope_l = (self.safety_line.b[0] - self.safety_line.a[0]) / (self.safety_line.b[1] - self.safety_line.a[1])
+        slope_e = (self.platform_edge.b[0] - self.platform_edge.a[0]) / (self.platform_edge.b[1] - self.platform_edge.a[1])
+        rate = abs(slope_l - slope_e)
+        if rate < 1e-6:
+            return None
+        min_sep = max(4.0, 0.012 * float(min(width, height)))
+        y_top = vp[1] + min_sep / rate
+        if y_top >= float(height - 1):
+            return None
+        return float(max(0.0, y_top))
+
+    def clipped_boundary_segments(self, width: int, height: int) -> tuple[Segment, Segment]:
+        """Clip L and E to image bounds and finite forward vanishing-point horizon."""
+        horizon_y = self.observable_horizon_y(width, height)
+        y_min = horizon_y if horizon_y is not None else 0.0
+        clipped_l = _clip_line_to_rect(self.safety_line, 0.0, y_min, float(width - 1), float(height - 1))
+        clipped_e = _clip_line_to_rect(self.platform_edge, 0.0, y_min, float(width - 1), float(height - 1))
+        return clipped_l or self.safety_line, clipped_e or self.platform_edge
+
     def assess_point(self, point: Point, image_shape: tuple[int, int], *,
                      tolerance_px: float = 0.0,
                      image_edge_margin_px: float = 1.0) -> PointAssessment:
@@ -231,6 +269,11 @@ class HazardZone:
         x, y = point
         if x < 0 or y < 0 or x > width - 1 or y > height - 1:
             return _assessment(point, "UNKNOWN", "point_out_of_bounds", d_l, d_e, None)
+
+        # Above a finite perspective horizon L and E cross/invert, so classification is indeterminate.
+        horizon_y = self.observable_horizon_y(width, height)
+        if horizon_y is not None and y < horizon_y:
+            return _assessment(point, "UNKNOWN", "outside_observable_zone", d_l, d_e, False)
 
         near_edge = (x <= image_edge_margin_px or y <= image_edge_margin_px
                      or x >= width - 1 - image_edge_margin_px
@@ -276,6 +319,50 @@ def _assessment(point: Point, status: str, reason: str,
                 inside_z: bool | None = None,
                 reasons: tuple[str, ...] | None = None) -> PointAssessment:
     return PointAssessment(point, status, reason, reasons or (reason,), d_l, d_e, inside_z)
+
+
+def _line_intersection(seg_a: Segment, seg_b: Segment) -> Point | None:
+    x1, y1 = seg_a.a
+    x2, y2 = seg_a.b
+    x3, y3 = seg_b.a
+    x4, y4 = seg_b.b
+    den = (x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4)
+    if abs(den) <= 1e-6:
+        return None
+    px = ((x1 * y2 - y1 * x2) * (x3 - x4) - (x1 - x2) * (x3 * y4 - y3 * x4)) / den
+    py = ((x1 * y2 - y1 * x2) * (y3 - y4) - (y1 - y2) * (x3 * y4 - y3 * x4)) / den
+    if not (math.isfinite(px) and math.isfinite(py)):
+        return None
+    return float(px), float(py)
+
+
+def _clip_line_to_rect(seg: Segment, x_min: float, y_min: float,
+                       x_max: float, y_max: float) -> Segment | None:
+    x1, y1 = seg.a
+    x2, y2 = seg.b
+    dx, dy = x2 - x1, y2 - y1
+    hits: list[Point] = []
+    if abs(dy) > 1e-9:
+        for yb in (y_min, y_max):
+            t = (yb - y1) / dy
+            xb = x1 + t * dx
+            if x_min - 1e-6 <= xb <= x_max + 1e-6:
+                hits.append((float(min(x_max, max(x_min, xb))), float(yb)))
+    if abs(dx) > 1e-9:
+        for xb in (x_min, x_max):
+            t = (xb - x1) / dx
+            yb = y1 + t * dy
+            if y_min - 1e-6 <= yb <= y_max + 1e-6:
+                hits.append((float(xb), float(min(y_max, max(y_min, yb)))))
+    unique: list[Point] = []
+    for pt in hits:
+        if not any(math.hypot(pt[0] - q[0], pt[1] - q[1]) < 1e-4 for q in unique):
+            unique.append(pt)
+    if len(unique) < 2:
+        return None
+    # Sort hits along the segment's direction to keep deterministic ordering.
+    unique.sort(key=lambda pt: (pt[0] - x1) * dx + (pt[1] - y1) * dy)
+    return Segment(unique[0], unique[-1])
 
 
 def _intersect(a, b, c, d) -> bool:

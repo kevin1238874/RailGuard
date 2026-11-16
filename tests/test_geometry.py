@@ -63,3 +63,29 @@ def test_missing_geometry_produces_unknown_not_empty_detections():
     assert status == "missing_calibration"
     assert len(decisions) == 1
     assert decisions[0].intrusion is None
+
+
+def test_perspective_vp_clip_removes_above_horizon_crossing():
+    from railguard.pipeline import draw
+
+    # Converging perspective pair intersecting at VP = (50, 20) inside 100x100 frame.
+    zone = HazardZone(Segment((10, 99), (46, 25)), Segment((80, 99), (53, 25)))
+    horizon_y = zone.observable_horizon_y(100, 100)
+    assert horizon_y is not None and 20.0 < horizon_y < 40.0
+
+    clipped_l, clipped_e = zone.clipped_boundary_segments(100, 100)
+    assert min(clipped_l.a[1], clipped_l.b[1]) >= horizon_y - 1e-6
+    assert min(clipped_e.a[1], clipped_e.b[1]) >= horizon_y - 1e-6
+
+    # Drawing should leave sky rows above horizon_y untouched (no infinite X-crossing).
+    blank = np.zeros((100, 100, 3), dtype=np.uint8)
+    vis = draw(blank, [], zone, "")
+    assert int(vis[:int(horizon_y) - 2].sum()) == 0
+
+
+def test_parallel_zone_has_no_horizon_clip():
+    zone = HazardZone(Segment((30, 10), (30, 90)), Segment((70, 10), (70, 90)))
+    assert zone.observable_horizon_y(100, 100) is None
+    clipped_l, clipped_e = zone.clipped_boundary_segments(100, 100)
+    assert min(clipped_l.a[1], clipped_l.b[1]) == 0.0
+    assert max(clipped_e.a[1], clipped_e.b[1]) == 99.0

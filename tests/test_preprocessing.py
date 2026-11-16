@@ -13,8 +13,10 @@ from railguard.preprocessing import (
     clahe,
     compute_quality_flags,
     default_m1_config,
+    exposure_fusion,
     gamma,
     gaussian_blur,
+    highlight_compress,
     hist_eq,
     identity,
     make_contact_sheet,
@@ -181,3 +183,26 @@ def test_contact_sheet_generation_and_cli(tmp_path: Path):
     record = json.loads(output.with_suffix(".json").read_text(encoding="utf-8"))
     assert record["status"] == "DONE_SYNTHETIC"
     assert record["records"][0]["pipeline"][0]["method"] == "clahe"
+
+
+def test_highlight_compress_and_exposure_fusion_handle_glare_and_flat_images():
+    assert {"highlight_compress", "glare_suppress", "exposure_fusion", "mertens_fusion"} <= PREPROCESSORS.keys()
+    # Washed-out sunlit scene with faint darker silhouette on bright background
+    glare = np.full((64, 64, 3), 245, dtype=np.uint8)
+    glare[16:52, 24:40] = (225, 225, 225)
+    compressed = highlight_compress(glare)
+    fused = exposure_fusion(glare)
+    assert compressed.shape == glare.shape and compressed.dtype == np.uint8
+    assert fused.shape == glare.shape and fused.dtype == np.uint8
+    # Highlight compression brings down overexposed brightness while keeping local contrast finite
+    assert compressed.mean() < glare.mean()
+    assert np.array_equal(apply_pipeline(glare, ["glare_suppress"]), compressed)
+    assert np.array_equal(apply_pipeline(glare, ["mertens_fusion"]), fused)
+
+    flat = np.full((32, 32, 3), 240, dtype=np.uint8)
+    assert np.array_equal(exposure_fusion(flat), flat)
+
+    with pytest.raises(ValueError, match="rolloff"):
+        highlight_compress(glare, rolloff=255.0)
+    with pytest.raises(ValueError, match="comp_slope"):
+        highlight_compress(glare, comp_slope=1.5)

@@ -140,3 +140,127 @@ def test_empty_observation_metadata_distinguishes_detection_from_no_people():
     assert missing_calibration.status == "UNKNOWN"
     assert missing_calibration.reason == "missing_calibration"
     assert failed.status == "UNKNOWN" and failed.reason == "detector_failure"
+
+
+def test_above_finite_vp_horizon_is_unknown_while_below_remains_decidable():
+    # L: x=20 at y=99 -> x=46 at y=25; E: x=70 at y=99 -> x=53 at y=25 -> VP near (49.3, 15.5)
+    zone = HazardZone(Segment((20, 99), (46, 25)), Segment((70, 99), (53, 25)))
+    horizon_y = zone.observable_horizon_y(100, 100)
+    assert horizon_y is not None and horizon_y > 15.0
+
+    # Above VP horizon: infinite lines cross/invert, so footpoint must be UNKNOWN/outside_observable_zone
+    above = zone.assess_point((35, 10), (100, 100))
+    assert above.status == "UNKNOWN"
+    assert above.reason == "outside_observable_zone"
+    assert above.inside_z is False
+
+    # Below VP horizon: M4 rules remain unchanged (SAFE left of L, DANGER beyond E)
+    safe_pt = zone.assess_point((10, 80), (100, 100))
+    danger_pt = zone.assess_point((85, 80), (100, 100))
+    assert safe_pt.status == "SAFE"
+    assert danger_pt.status == "DANGER" and danger_pt.reason == "beyond_platform_edge"
+
+
+def test_structured_foot_evidence_rejects_glass_reflection_while_keeping_real_foot():
+    import cv2
+    from railguard.foot_refinement import FootEvidence, assess_foot_evidence
+
+    image = np.full((240, 240, 3), 160, np.uint8)
+    # Horizontal platform brick texture on real side (x < 98)
+    for y in range(20, 235, 16):
+        cv2.line(image, (0, y), (96, y), (110, 110, 110), 2)
+    # Continuous dark vertical track trench/seam (x = 98..126) extending below foot height
+    image[:, 98:127] = 18
+    # Train side (x >= 127) with strong vertical window mullions/reflections
+    image[:, 127:] = 85
+    for x in range(132, 236, 12):
+        cv2.line(image, (x, 0), (x, 239), (30, 30, 30), 2)
+
+    kpts = [(112.0, 90.0, 0.9)] * 17
+    kpts[11] = (106.0, 120.0, 0.95)
+    kpts[12] = (114.0, 120.0, 0.95)
+    kpts[13] = (86.0, 150.0, 0.95)
+    kpts[14] = (140.0, 150.0, 0.95)
+    kpts[15] = (70.0, 175.0, 0.95)
+    kpts[16] = (160.0, 175.0, 0.95)
+    person = Person((55, 40, 175, 185), 0.9, ankles=[kpts[15], kpts[16]], keypoints=kpts)
+
+    evidences, wrapper_status = assess_foot_evidence(image, person, [(70.0, 175.0), (160.0, 175.0)])
+    assert len(evidences) == 2 and all(isinstance(ev, FootEvidence) for ev in evidences)
+    assert evidences[0].status == "accepted"
+    assert evidences[1].status == "rejected_reflection"
+    assert wrapper_status in {"refined_local_support", "refinement_no_support"}
+
+    zone = HazardZone(Segment((45, 0), (45, 239)), Segment((96, 0), (96, 239)))
+    decisions, _, _ = analyze(image, [person], zone, foot_method="pose", refine_footpoints=True)
+    assert len(decisions) == 1
+    assert decisions[0].status == "DANGER"
+    assert decisions[0].reason == "inside_hazard_zone"
+    assert len(decisions[0].foot_points) == 1
+    assert decisions[0].foot_points[0][0] < 96.0
+
+
+def test_safe_with_ambiguous_or_rejected_foot_evidence_becomes_unknown():
+    image = np.full((120, 120, 3), 140, np.uint8)
+    # Inverted hip->knee->ankle skeleton (ankle above knee) on safe side of L=(80,y)
+    kpts = [(30.0, 20.0, 0.9)] * 17
+    kpts[11] = (28.0, 50.0, 0.9)
+    kpts[12] = (34.0, 50.0, 0.9)
+    kpts[13] = (28.0, 82.0, 0.9)
+    kpts[14] = (34.0, 82.0, 0.9)
+    kpts[15] = (28.0, 65.0, 0.9)
+    kpts[16] = (34.0, 95.0, 0.9)
+    person = Person((15, 10, 48, 100), 0.9, ankles=[kpts[15], kpts[16]], keypoints=kpts)
+    zone = HazardZone(Segment((80, 0), (80, 119)), Segment((100, 0), (100, 119)))
+
+    decisions, _, _ = analyze(image, [person], zone, foot_method="pose", refine_footpoints=True)
+    assert len(decisions) == 1
+    assert decisions[0].status == "UNKNOWN"
+    assert decisions[0].reason == "ambiguous_footpoint_evidence"
+    assert decisions[0].intrusion is None
+    assert decisions[0].foot_evidence[0]["status"] == "ambiguous"
+
+
+def test_aggregate_frame_completeness_priority_order():
+    safe_dec = Decision((1, 2, 3, 4), 0.9, [(1, 2)], "pose", False)
+    danger_dec = Decision((1, 2, 3, 4), 0.9, [(1, 2)], "pose", True)
+    unknown_dec = Decision((1, 2, 3, 4), 0.9, [], "abstain", None)
+
+    partial_cov = {"proposals": 3, "pose_covered": 1, "uncovered": 2, "detector_partial": True}
+    complete_cov = {"proposals": 3, "pose_covered": 3, "uncovered": 0, "detector_partial": False}
+
+    # SAFE + partial detection -> UNKNOWN (prevents False SAFE when distant workers are missed)
+    frame_partial = aggregate_frame([safe_dec], detector_coverage=partial_cov)
+    assert frame_partial.status == "UNKNOWN"
+    assert frame_partial.reason == "detections_partial"
+    assert frame_partial.observation_status == "detections_partial"
+    assert frame_partial.detector_partial is True
+
+    # Priority order: DANGER > detector partial, and person UNKNOWN > detector partial
+    assert aggregate_frame([safe_dec, danger_dec], detector_coverage=partial_cov).status == "DANGER"
+    unk_partial = aggregate_frame([safe_dec, unknown_dec], detector_coverage=partial_cov)
+    assert unk_partial.status == "UNKNOWN" and unk_partial.reason == "person_unknown"
+
+    # detector partial > calibration failure
+    cal_and_partial = aggregate_frame([safe_dec], calibration_valid=False, detector_coverage=partial_cov)
+    assert cal_and_partial.status == "UNKNOWN" and cal_and_partial.reason == "detections_partial"
+
+    # SAFE + complete coverage -> SAFE
+    complete_safe = aggregate_frame([safe_dec], detector_coverage=complete_cov)
+    assert complete_safe.status == "SAFE" and complete_safe.detector_partial is False
+
+
+def test_assess_foot_evidence_cached_gray_and_edges_matches_uncached():
+    import cv2
+    from railguard.foot_refinement import assess_foot_evidence
+
+    image = np.full((120, 120, 3), 140, np.uint8)
+    cv2.rectangle(image, (30, 85), (75, 92), (35, 35, 35), -1)
+    person = Person((25, 20, 80, 95), 0.9, ankles=[(40.0, 88.0, 0.9), (60.0, 89.0, 0.9)])
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    edges = cv2.Canny(cv2.GaussianBlur(gray, (5, 5), 0), 40, 120)
+
+    seeds = [(40.0, 88.0), (60.0, 89.0)]
+    ev_uncached = assess_foot_evidence(image, person, seeds)
+    ev_cached = assess_foot_evidence(image, person, seeds, gray=gray, edges=edges)
+    assert ev_cached == ev_uncached

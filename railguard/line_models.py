@@ -180,9 +180,13 @@ def line_clustering(
         raise ValueError("distance_threshold must be positive")
     if min_cluster_size <= 0:
         raise ValueError("min_cluster_size must be positive")
-    directions = [_segment_direction(item) for item in items]
-    centers = [(np.asarray(item.a) + np.asarray(item.b)) * .5 for item in items]
-    parent = list(range(len(items)))
+    directions = np.asarray([_segment_direction(item) for item in items], dtype=float)
+    a_pts = np.asarray([item.a for item in items], dtype=float)
+    b_pts = np.asarray([item.b for item in items], dtype=float)
+    centers = 0.5 * (a_pts + b_pts)
+    normals = np.column_stack((-directions[:, 1], directions[:, 0]))
+    n_items = len(items)
+    parent = list(range(n_items))
 
     def root(index: int) -> int:
         while parent[index] != index:
@@ -196,25 +200,30 @@ def line_clustering(
             parent[rb] = ra
 
     cosine = math.cos(math.radians(float(angle_threshold_deg)))
-    for i in range(len(items)):
-        ni = np.array([-directions[i][1], directions[i][0]])
+    angle_ok = np.abs(directions @ directions.T) >= cosine
+    max_long_gap = max(distance_threshold * 10.0, 160.0)
+    for i in range(n_items - 1):
+        cand_js = np.flatnonzero(angle_ok[i, i + 1:]) + (i + 1)
+        if cand_js.size == 0:
+            continue
+        deltas = centers[cand_js] - centers[i]
+        d_ni = np.abs(deltas @ normals[i])
+        d_nj = np.abs(np.sum(deltas * normals[cand_js], axis=1))
+        perp_ok = np.maximum(d_ni, d_nj) <= distance_threshold
+        cand_js = cand_js[perp_ok]
+        if cand_js.size == 0:
+            continue
         di = directions[i]
-        pi_a, pi_b = float(np.dot(items[i].a, di)), float(np.dot(items[i].b, di))
-        min_i, max_i = min(pi_a, pi_b), max(pi_a, pi_b)
-        for j in range(i + 1, len(items)):
-            if abs(float(np.dot(directions[i], directions[j]))) < cosine:
-                continue
-            nj = np.array([-directions[j][1], directions[j][0]])
-            delta = centers[j] - centers[i]
-            # Both perpendicular distances must be small
-            if max(abs(float(delta @ ni)), abs(float(delta @ nj))) > distance_threshold:
-                continue
-            # Longitudinal gap: Do not merge segments separated by huge empty gaps along the line
-            pj_a, pj_b = float(np.dot(items[j].a, di)), float(np.dot(items[j].b, di))
-            min_j, max_j = min(pj_a, pj_b), max(pj_a, pj_b)
-            longitudinal_gap = max(0.0, max(min_i, min_j) - min(max_i, max_j))
-            if longitudinal_gap <= max(distance_threshold * 10.0, 160.0):
-                union(i, j)
+        pi_a = float(a_pts[i] @ di)
+        pi_b = float(b_pts[i] @ di)
+        min_i, max_i = (pi_a, pi_b) if pi_a <= pi_b else (pi_b, pi_a)
+        pj_a = a_pts[cand_js] @ di
+        pj_b = b_pts[cand_js] @ di
+        min_j = np.minimum(pj_a, pj_b)
+        max_j = np.maximum(pj_a, pj_b)
+        long_gaps = np.maximum(0.0, np.maximum(min_i, min_j) - np.minimum(max_i, max_j))
+        for j in cand_js[long_gaps <= max_long_gap]:
+            union(i, int(j))
     groups: dict[int, list[Segment]] = {}
     for index, segment in enumerate(items):
         groups.setdefault(root(index), []).append(segment)

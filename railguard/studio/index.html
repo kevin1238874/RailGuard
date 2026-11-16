@@ -542,6 +542,28 @@
         <div class="inline-msg" id="method-msg"></div>
 
         <div class="field">
+          <div class="field-title">Tiền xử lý chống lóa nắng (M1)</div>
+          <select id="preproc-select">
+            <option value="auto" selected>Tự động chống lóa (An toàn vạch + Bắt vùng nắng M3)</option>
+            <option value="highlight_compress">Highlight Compress (Nén vùng chói nắng M3)</option>
+            <option value="clahe">CLAHE (Cân bằng tương phản cục bộ)</option>
+            <option value="gamma">Gamma (Điều chỉnh độ sáng)</option>
+            <option value="exposure_fusion">Exposure Fusion (Trộn đa phơi sáng)</option>
+            <option value="raw">Ảnh gốc (Raw — Không tiền xử lý)</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <div class="field-title">Khử nhiễu tàu cho biên sân ga (M2)</div>
+          <select id="train-suppression-select">
+            <option value="structural" selected>Cấu trúc hình học (mặc định, không dùng AI)</option>
+            <option value="off">Tắt khử nhiễu tàu</option>
+            <option value="yolo_seg">YOLO-Seg (tùy chọn, tải mô hình khi dùng)</option>
+            <option value="hybrid_yolo_seg">Kết hợp cấu trúc + YOLO-Seg</option>
+          </select>
+        </div>
+
+        <div class="field">
           <div class="field-title">Mô hình phát hiện người (M3)</div>
           <select id="detector-select">
             <option value="A YOLO pose" selected>YOLO11 Pose (Crop-Pose bắt đủ người xa/gần)</option>
@@ -714,7 +736,30 @@
       }
     }
 
+    const M2_RAW_PREPROCS = new Set([
+      'auto', 'highlight_compress', 'glare_suppress',
+      'exposure_fusion', 'mertens_fusion', 'gamma', 'clahe', 'raw',
+    ]);
+    let lastM2EffectivePreproc = 'raw';
+    const preprocSelect = document.getElementById('preproc-select');
+    const trainSuppressionSelect = document.getElementById('train-suppression-select');
+    preprocSelect.onchange = () => {
+      if (!currentImage) return;
+      overlayImageBitmap = null;
+      render();
+      const nextEff = M2_RAW_PREPROCS.has(preprocSelect.value) ? 'raw' : preprocSelect.value;
+      if (activeMethod && activeMethod !== 'manual' && (nextEff !== lastM2EffectivePreproc || points.some(p => !p))) {
+        triggerAutoZone(activeMethod);
+      }
+    };
+    trainSuppressionSelect.onchange = () => {
+      if (currentImage && activeMethod && activeMethod !== 'manual') triggerAutoZone(activeMethod);
+    };
+
+    let autoZoneSeq = 0;
+
     async function triggerAutoZone(method) {
+      const seq = ++autoZoneSeq;
       sysStatus.innerText = "Đang phân tích vạch (" + method + ")…";
       statusDot.className = "status-dot busy";
       btnRun.disabled = true;
@@ -723,12 +768,19 @@
         const resp = await fetch('/api/auto-zone', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ image: currentImage, method: method, preproc: 'raw' })
+          body: JSON.stringify({
+            image: currentImage,
+            method: method,
+            preproc: preprocSelect.value,
+            train_suppression: trainSuppressionSelect.value
+          })
         });
         const data = await resp.json();
+        if (seq !== autoZoneSeq) return;
         
         if (data.points) {
           points = data.points;
+          lastM2EffectivePreproc = data.effective_preprocess || (M2_RAW_PREPROCS.has(preprocSelect.value) ? 'raw' : preprocSelect.value);
           sysStatus.innerText = "Đã xác định vạch L & E!";
           statusDot.className = "status-dot";
           showInlineMessage('success', '✓ Tìm vạch thành công (' + method + '). Vạch đã khóa cố định.');
@@ -743,6 +795,7 @@
           render();
         }
       } catch (err) {
+        if (seq !== autoZoneSeq) return;
         showInlineMessage('warning', '⚠️ Lỗi kết nối API: ' + err);
         statusDot.className = "status-dot";
         btnRun.disabled = true;
@@ -1060,7 +1113,8 @@
             points: points,
             detector: document.getElementById('detector-select').value,
             confidence: 0.25,
-            preproc: 'raw'
+            preproc: preprocSelect.value,
+            train_suppression: trainSuppressionSelect.value
           })
         });
         const data = await resp.json();

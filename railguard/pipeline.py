@@ -26,6 +26,7 @@ class Decision:
     reason: str = "unclassified"
     reasons: list[str] = field(default_factory=list)
     point_assessments: list[PointAssessment] = field(default_factory=list)
+    foot_evidence: list[dict] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         if self.status is None:
@@ -54,6 +55,7 @@ class Decision:
             "object_id": self.object_id,
             "pose_outcome": self.pose_outcome,
             "refinement_status": self.refinement_status,
+            "foot_evidence": list(self.foot_evidence),
         }
 
 
@@ -68,6 +70,7 @@ class FrameDecision:
     danger: int
     unknown: int
     safe: int
+    detector_partial: bool = False
 
     def as_dict(self) -> dict:
         return {
@@ -76,6 +79,7 @@ class FrameDecision:
             "reasons": list(self.reasons),
             "observation_status": self.observation_status,
             "calibration_status": self.calibration_status,
+            "detector_partial": self.detector_partial,
             "people": self.people,
             "danger": self.danger,
             "unknown": self.unknown,
@@ -86,15 +90,17 @@ class FrameDecision:
 def aggregate_frame(decisions: list[Decision], *,
                     observation_status: str | None = None,
                     calibration_status: str = "manually_calibrated",
-                    calibration_valid: bool = True) -> FrameDecision:
+                    calibration_valid: bool = True,
+                    detector_coverage: dict | None = None) -> FrameDecision:
     """Use one tri-state aggregation rule for CLI, Studio, and evaluation.
 
-    An empty detector result defaults to ``no_detections`` and UNKNOWN.  A
-    caller may declare ``confirmed_no_people`` only when its observation source
-    (for example complete ground-truth annotations) actually establishes that.
+    Priority order: DANGER > person UNKNOWN > detector failure/partial >
+    calibration failure > complete SAFE > confirmed-no-people SAFE >
+    no-detections UNKNOWN.
     """
     allowed_observations = {
-        "detections_complete", "no_detections", "confirmed_no_people", "detector_failure",
+        "detections_complete", "detections_partial", "no_detections",
+        "confirmed_no_people", "detector_failure",
     }
     if observation_status is None:
         observation_status = "detections_complete" if decisions else "no_detections"
@@ -102,6 +108,12 @@ def aggregate_frame(decisions: list[Decision], *,
         raise ValueError(f"Unknown observation_status: {observation_status}")
     if any(dec.status not in VALID_STATUSES for dec in decisions):
         raise ValueError("Every person decision must have SAFE, DANGER, or UNKNOWN status")
+
+    detector_partial = bool(detector_coverage and detector_coverage.get("detector_partial"))
+    if observation_status == "detections_partial":
+        detector_partial = True
+    elif detector_partial and observation_status != "detector_failure":
+        observation_status = "detections_partial"
 
     counts = {name: sum(dec.status == name for dec in decisions)
               for name in ("DANGER", "UNKNOWN", "SAFE")}
@@ -111,6 +123,8 @@ def aggregate_frame(decisions: list[Decision], *,
         status, reason, reasons = "UNKNOWN", "person_unknown", ("person_unknown",)
     elif observation_status == "detector_failure":
         status, reason, reasons = "UNKNOWN", "detector_failure", ("detector_failure",)
+    elif observation_status == "detections_partial" or detector_partial:
+        status, reason, reasons = "UNKNOWN", "detections_partial", ("detections_partial",)
     elif not calibration_valid:
         reason = ("invalid_calibration" if calibration_status == "invalid_calibration"
                   else "missing_calibration")
@@ -128,6 +142,7 @@ def aggregate_frame(decisions: list[Decision], *,
     return FrameDecision(
         status, reason, reasons, observation_status, calibration_status,
         len(decisions), counts["DANGER"], counts["UNKNOWN"], counts["SAFE"],
+        detector_partial=detector_partial,
     )
 
 
@@ -163,14 +178,25 @@ def analyze(image: np.ndarray, people: list[Person], zone: HazardZone | None = N
         except (TypeError, ValueError, cv2.error):
             zone, status = None, "invalid_calibration"
 
+    cached_gray: np.ndarray | None = None
+    cached_edges: np.ndarray | None = None
+    if refine_footpoints and people:
+        cached_gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if image.ndim == 3 else image
+        cached_edges = cv2.Canny(cached_gray, 50, 150)
+
     decisions: list[Decision] = []
     for person in people:
         feet, source = person.foot_points(foot_method, keypoint_confidence, pose_fallback)
         refinement_status = None
+        evidences = []
         if refine_footpoints and feet:
-            from .foot_refinement import refine_foot_points
-            feet, refinement_status = refine_foot_points(
-                image, person, feet, foreground_mask=foreground_mask)
+            from .foot_refinement import assess_foot_evidence
+            evidences, refinement_status = assess_foot_evidence(
+                image, person, feet, foreground_mask=foreground_mask,
+                gray=cached_gray, edges=cached_edges)
+            feet = [ev.point for ev in evidences if ev.status != "rejected_reflection"]
+        rejected_count = sum(1 for ev in evidences if ev.status == "rejected_reflection")
+        ambiguous_count = sum(1 for ev in evidences if ev.status == "ambiguous")
         pose_outcome = ("bbox_fallback" if source == "bbox_fallback" else
                         "abstain" if source == "abstain" else
                         "ankle" if source in {"one_ankle", "two_ankles"} else None)
@@ -182,8 +208,11 @@ def analyze(image: np.ndarray, people: list[Person], zone: HazardZone | None = N
             reasons = [reason]
         elif not feet:
             decision_status = "UNKNOWN"
-            reason = ("missing_or_low_confidence_keypoints" if foot_method in {"pose", "pose_ankle"}
-                      else "missing_footpoints")
+            if rejected_count > 0:
+                reason = "all_footpoints_rejected_as_reflection"
+            else:
+                reason = ("missing_or_low_confidence_keypoints" if foot_method in {"pose", "pose_ankle"}
+                          else "missing_footpoints")
             reasons = [reason]
         else:
             assessments = [zone.assess_point(
@@ -192,13 +221,23 @@ def analyze(image: np.ndarray, people: list[Person], zone: HazardZone | None = N
             ) for point in feet]
             if any(item.status == "DANGER" for item in assessments):
                 decision_status = "DANGER"
+                selected = [item for item in assessments if item.status == "DANGER"]
+                reason = selected[0].reason
+                reasons = _unique(code for item in selected for code in item.reasons)
             elif any(item.status == "UNKNOWN" for item in assessments):
                 decision_status = "UNKNOWN"
+                selected = [item for item in assessments if item.status == "UNKNOWN"]
+                reason = selected[0].reason
+                reasons = _unique(code for item in selected for code in item.reasons)
+            elif ambiguous_count > 0 or rejected_count > 0:
+                decision_status = "UNKNOWN"
+                reason = "ambiguous_footpoint_evidence"
+                reasons = _unique([reason, *(ev.reason for ev in evidences if ev.status in {"ambiguous", "rejected_reflection"})])
             else:
                 decision_status = "SAFE"
-            selected = [item for item in assessments if item.status == decision_status]
-            reason = selected[0].reason
-            reasons = _unique(code for item in selected for code in item.reasons)
+                selected = [item for item in assessments if item.status == "SAFE"]
+                reason = selected[0].reason
+                reasons = _unique(code for item in selected for code in item.reasons)
 
         intrusion = True if decision_status == "DANGER" else False if decision_status == "SAFE" else None
         decisions.append(Decision(
@@ -207,6 +246,7 @@ def analyze(image: np.ndarray, people: list[Person], zone: HazardZone | None = N
             object_id=person.object_id, pose_outcome=pose_outcome,
             refinement_status=refinement_status, status=decision_status,
             reason=reason, reasons=reasons, point_assessments=assessments,
+            foot_evidence=[ev.as_dict() for ev in evidences],
         ))
     return decisions, zone, status
 
@@ -234,29 +274,11 @@ def draw(image: np.ndarray, decisions: list[Decision], zone: HazardZone | None,
         cv2.fillPoly(overlay, [poly], (0, 160, 240))
         cv2.addWeighted(overlay, 0.28, canvas, 0.72, 0, canvas)
 
-        def _line_endpoints(seg):
-            p1, p2 = np.asarray(seg.a, float), np.asarray(seg.b, float)
-            dx = p2[0] - p1[0]
-            dy = p2[1] - p1[1]
-            pts = []
-            if abs(dy) > 1e-6:
-                for y in (0, h - 1):
-                    x = p1[0] + dx * (y - p1[1]) / dy
-                    if 0 <= x <= w - 1:
-                        pts.append((int(x), int(y)))
-            if abs(dx) > 1e-6:
-                for x in (0, w - 1):
-                    y = p1[1] + dy * (x - p1[0]) / dx
-                    if 0 <= y <= h - 1:
-                        cand = (int(x), int(y))
-                        if not any(abs(cand[0]-p[0]) < 2 and abs(cand[1]-p[1]) < 2 for p in pts):
-                            pts.append(cand)
-            if len(pts) >= 2:
-                return pts[0], pts[1]
-            return tuple(map(int, seg.a)), tuple(map(int, seg.b))
-
-        pL_a, pL_b = _line_endpoints(zone.safety_line)
-        pE_a, pE_b = _line_endpoints(zone.platform_edge)
+        clipped_l, clipped_e = zone.clipped_boundary_segments(w, h)
+        pL_a = (int(round(clipped_l.a[0])), int(round(clipped_l.a[1])))
+        pL_b = (int(round(clipped_l.b[0])), int(round(clipped_l.b[1])))
+        pE_a = (int(round(clipped_e.a[0])), int(round(clipped_e.a[1])))
+        pE_b = (int(round(clipped_e.b[0])), int(round(clipped_e.b[1])))
         cv2.line(canvas, pL_a, pL_b, (0, 165, 255), 3)
         cv2.line(canvas, pE_a, pE_b, (255, 180, 0), 3)
     for dec in decisions:
