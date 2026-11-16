@@ -7,6 +7,7 @@ import io
 import numpy as np
 import pytest
 
+from conftest import requires_hog
 from railguard.geometry import HazardZone, Segment
 from railguard.ui_state import (
     CalibrationSessionState,
@@ -70,6 +71,7 @@ def test_invalid_or_unconfirmed_calibration_blocks_inference():
         run_ui_inference([frame], zone, confirmed=False, detector_kind="B1 HOG+SVM")
 
 
+@requires_hog
 def test_ui_inference_b1_and_csv_export():
     zone = HazardZone(Segment((10.0, 60.0), (150.0, 60.0)), Segment((10.0, 95.0), (150.0, 95.0)))
     frame = _synthetic_frame()

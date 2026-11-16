@@ -145,68 +145,54 @@ class HazardZone:
             raise ValueError("tolerance_px must be finite and >= 0")
         return cv2.pointPolygonTest(self.polygon(), tuple(map(float, point)), True) >= -tolerance_px
 
-    def corridor_polygon(self, width: int, height: int, y_top: float | None = None) -> np.ndarray:
-        """Compute the continuous hazard corridor polygon between L and E,
+    def in_corridor(self, point: Point, tolerance_px: float = 0.0) -> bool:
+        """True when ``point`` lies between the infinite lines L and E.
 
-        clipped cleanly to the image rectangle [0, width-1] x [y_top, height-1].
-        Properly handles perspective vanishing points and frame corners (e.g. bottom-left
-        or bottom-right platform cutoffs) without leaving triangular gaps.
+        The corridor is the intersection of two half-planes: the E side of L
+        and the L side of E. It extends Z along the platform (both lines are
+        clipped by the image, not by the clicked endpoints) and, for converging
+        perspective lines, is the wedge on Z's side of the vanishing point.
+        It uses signed distances only, so it is independent of camera
+        orientation (horizontal, vertical, diagonal, mirrored) and click order.
         """
-        def get_x(pA, pB, y):
-            dy = pB[1] - pA[1]
-            dx = pB[0] - pA[0]
-            if abs(dy) < 1e-7:
-                return float(pA[0])
-            return float(pA[0] + dx * (y - pA[1]) / dy)
+        d_l, d_e = self.signed_distances(point)
+        return d_l >= -tolerance_px and d_e <= tolerance_px
 
-        def get_y(pA, pB, x):
-            dx = pB[0] - pA[0]
-            dy = pB[1] - pA[1]
-            if abs(dx) < 1e-7:
-                return float(pA[1])
-            return float(pA[1] + dy * (x - pA[0]) / dx)
+    def corridor_polygon(self, width: int, height: int) -> np.ndarray:
+        """The corridor (see :meth:`in_corridor`) clipped to the image rectangle.
 
-        p1, p2 = np.asarray(self.safety_line.a, float), np.asarray(self.safety_line.b, float)
-        q1, q2 = np.asarray(self.platform_edge.a, float), np.asarray(self.platform_edge.b, float)
+        Built by Sutherland-Hodgman clipping of the image rectangle against the
+        two half-planes, so it is valid for any line orientation. Returns an
+        empty ``(0, 2)`` array when the corridor does not intersect the image.
+        """
+        self.polygon()  # validates the calibration
+        polygon = [(0.0, 0.0), (width - 1.0, 0.0), (width - 1.0, height - 1.0), (0.0, height - 1.0)]
 
-        # Vanishing point perspective check
-        A = np.column_stack([p2 - p1, -(q2 - q1)])
-        b = q1 - p1
-        if y_top is None:
-            y_top = 0.0
-            if abs(float(np.linalg.det(A))) > 1e-5:
-                params = np.linalg.solve(A, b)
-                inter = p1 + float(params[0]) * (p2 - p1)
-                if 0 <= inter[1] < height * 0.75:
-                    y_top = float(min(height - 10, max(0, inter[1] + 15)))
+        def unsafe_of_l(p):  # >= 0 on the E side of L
+            return self.signed_distances(p)[0]
 
-        y_bot = float(height - 1)
-        y_events = {float(y_top), float(y_bot)}
-        for pA, pB in [(p1, p2), (q1, q2)]:
-            for x_edge in [0.0, float(width - 1)]:
-                y_edge = get_y(pA, pB, x_edge)
-                if y_top < y_edge < y_bot:
-                    y_events.add(float(y_edge))
+        def safe_of_e(p):  # >= 0 on the L side of E
+            return -self.signed_distances(p)[1]
 
-        sorted_y = sorted(y_events)
-        right_pts = []
-        for y in sorted_y:
-            xL = get_x(p1, p2, y)
-            xE = get_x(q1, q2, y)
-            xr = float(np.clip(max(xL, xE), 0, width - 1))
-            if not right_pts or abs(right_pts[-1][0] - xr) > 1e-3 or abs(right_pts[-1][1] - y) > 1e-3:
-                right_pts.append((xr, y))
-
-        left_pts = []
-        for y in reversed(sorted_y):
-            xL = get_x(p1, p2, y)
-            xE = get_x(q1, q2, y)
-            xl = float(np.clip(min(xL, xE), 0, width - 1))
-            if not left_pts or abs(left_pts[-1][0] - xl) > 1e-3 or abs(left_pts[-1][1] - y) > 1e-3:
-                left_pts.append((xl, y))
-
-        poly = right_pts + left_pts
-        return np.array(poly, dtype=np.float32)
+        for side in (unsafe_of_l, safe_of_e):
+            clipped: list[Point] = []
+            for index, current in enumerate(polygon):
+                previous = polygon[index - 1]
+                f_cur, f_prev = side(current), side(previous)
+                if f_cur >= 0:
+                    if f_prev < 0:
+                        t = f_prev / (f_prev - f_cur)
+                        clipped.append((previous[0] + t * (current[0] - previous[0]),
+                                        previous[1] + t * (current[1] - previous[1])))
+                    clipped.append(current)
+                elif f_prev >= 0:
+                    t = f_prev / (f_prev - f_cur)
+                    clipped.append((previous[0] + t * (current[0] - previous[0]),
+                                    previous[1] + t * (current[1] - previous[1])))
+            polygon = clipped
+            if not polygon:
+                break
+        return np.asarray(polygon, dtype=np.float32).reshape(-1, 2)
 
     def signed_distances(self, point: Point) -> tuple[float, float]:
         """Distances positive in the calibrated L -> E -> track direction."""
@@ -292,13 +278,10 @@ class HazardZone:
         near_edge = (x <= image_edge_margin_px or y <= image_edge_margin_px
                      or x >= width - 1 - image_edge_margin_px
                      or y >= height - 1 - image_edge_margin_px)
-        inside_z = self.contains(point, tolerance_px=tolerance_px)
-        if not inside_z and height >= 2 and width >= 2:
-            try:
-                corr = self.corridor_polygon(width, height)
-                inside_z = bool(cv2.pointPolygonTest(corr, tuple(map(float, point)), True) >= -tolerance_px)
-            except Exception:
-                pass
+        # The point is already known to be inside the image, so the corridor
+        # test needs no polygon clipping: it is a pure half-plane check.
+        inside_z = (self.contains(point, tolerance_px=tolerance_px)
+                    or self.in_corridor(point, tolerance_px=tolerance_px))
         longitudinal_slack_l = tolerance_px / max(self.safety_line.length(), 1e-12)
         longitudinal_slack_e = tolerance_px / max(self.platform_edge.length(), 1e-12)
         on_l_segment = -longitudinal_slack_l <= self.safety_line.projection(point) <= 1 + longitudinal_slack_l

@@ -121,7 +121,7 @@ def build_debug_stages(
     hough_vis = m2_img.copy()
     segs = cv2.HoughLinesP(edges, 1, np.pi / 180.0, threshold=40, minLineLength=max(20, m2_img.shape[1] // 15), maxLineGap=15)
     if segs is not None:
-        for seg in segs[:, 0]:
+        for seg in np.asarray(segs).reshape(-1, 4):
             cv2.line(hough_vis, (int(seg[0]), int(seg[1])), (int(seg[2]), int(seg[3])), (0, 255, 0), 2)
 
     ransac_vis = m2_img.copy()

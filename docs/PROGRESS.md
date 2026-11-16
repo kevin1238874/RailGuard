@@ -148,6 +148,17 @@ This file records verified repository state. It does not claim results on RailEy
 - Tests: `.\.venv\Scripts\python.exe -m pytest -q` → `122 passed` (verified alongside `compileall -q railguard` and `railguard studio --help`)
 - Commit: no commit created per task constraint
 
+## P9 — Orientation-independent corridor, explicit Crop-Pose, OpenCV 5 & server hardening (2026-11-14)
+- Status: DONE_SYNTHETIC (no real RailEye3D data; `BLOCKED_REAL_DATA` unchanged)
+- Files changed: `railguard/geometry.py`, `railguard/pipeline.py`, `railguard/detection.py`, `railguard/server.py`, `railguard/boundaries.py`, `railguard/ui_state.py`, `railguard/classic_detectors.py`, `pyproject.toml`, `README.md`, `configs/README.md`, `docs/IMPLEMENTATION_NOTES.md`, `tests/conftest.py`, `tests/test_app_state.py`, `tests/test_detectors_m3.py`, `tests/test_regressions_geometry_pose_server.py`
+- Bugs fixed:
+  - **M4 corridor:** `corridor_polygon` parameterised lines as x = f(y), so with horizontal L/E (side-view cameras) points on the safe side were classified `DANGER/inside_hazard_zone`. The corridor is now the intersection of two half-planes (E side of L, L side of E) via signed distances (`HazardZone.in_corridor`), and the drawn polygon is a Sutherland–Hodgman clip of the image rectangle. Decisions are identical under 90° rotations.
+  - **M3 Crop-Pose:** was enabled implicitly whenever `yolo11n.pt` existed in the working directory, discarded pose-only people, and took the first person in a crop. It is now opt-in (`enable_crop_pose`, `crop_pose_det_weights`, injectable `det_model`), keeps all direct pose detections, uses one-to-one IoU matching, selects the crop person by IoU with the target box, and records `crop_pose`/`crop_pose_det_weights` in `last_config` and person metadata. CLI/evaluation default to plain pose; Studio enables Crop-Pose explicitly.
+  - **OpenCV 5:** `HoughLinesP` output reshaped to `(N, 4)`; B1 HOG+SVM raises a clear `RuntimeError` when `cv2.HOGDescriptor` is absent, and its tests skip.
+  - **Studio server:** `ThreadingHTTPServer` (matching docs), YOLO models cached per process with a lock, wildcard CORS removed, JSON content type and 64 MB body limit enforced, undecodable images rejected with a clear error.
+  - **Packaging/docs:** `studio/*.html` shipped as package data; removed nonexistent `demo` extra; corrected endpoint names and the stale Streamlit reference.
+- Tests: Python 3.13 + opencv-python 4.14 → `153 passed`; Python 3.14 + OpenCV 5.0 → `150 passed, 3 skipped` (HOG). The 31 new regression tests fail 17/31 on the previous code.
+- Behaviour change to report: with Crop-Pose now off by default outside Studio, any earlier pose run made from a directory containing `yolo11n.pt` used a different (det-box) condition and is not comparable.
 
 ## P9 — Codex CLI Co-Designed M1–M4 Accuracy, Safety & Runtime Hardening (2026-11-14)
 - Status: `DONE_VERIFIED_ON_4_USER_BENCHMARK_IMAGES` (Codex CLI `gpt-5.6-sol` review: `APPROVED` in `outputs/agent_runs/codex_workflow/round4_codex_final_review.md`; RailEye3D dataset remains absent in `data/`)

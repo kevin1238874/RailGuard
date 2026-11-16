@@ -3,6 +3,11 @@ import cv2
 import numpy as np
 import pytest
 
+# OpenCV 5 removed cv2.HOGDescriptor from core; B1 HOG+SVM needs opencv-python<5.
+requires_hog = pytest.mark.skipif(
+    not hasattr(cv2, "HOGDescriptor"),
+    reason="cv2.HOGDescriptor unavailable (OpenCV 5); install opencv-python<5")
+
 
 @pytest.fixture
 def tiny_raileye(tmp_path: Path):

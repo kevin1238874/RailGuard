@@ -25,5 +25,8 @@ railguard = "railguard.cli:main"
 [tool.setuptools.packages.find]
 include = ["railguard*"]
 
+[tool.setuptools.package-data]
+railguard = ["studio/*.html"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
