@@ -23,6 +23,8 @@
   3. Nguồn lỗi lớn nhất là **detector bỏ sót người bị che khuất**, **bóng người phản chiếu trên thân tàu bị phát hiện thành người**, và **vùng an toàn tự dò bị sai lúc sân ga đông người**.
   4. Ở mức frame ("frame này có người vi phạm không?"), hệ thống đạt **F1 0.96–0.97, precision 0.99**.
 
+- **Kiểm tra chéo** (mục 6.5): đổi vai hai ga, chọn ngưỡng trên Fels rồi chấm trên Stockerau. Cả ba cách đạt F1 **0.935** (mặc định 0.909). Kết luận chính vẫn dựa vào chiều Stockerau → Fels, vì Stockerau chỉ có 41 người vi phạm.
+
 ## 1. Hệ thống
 
 ```
@@ -54,6 +56,7 @@ Ba cách xác định điểm chân được so sánh:
 
 - Annotation: repo chính thức `raileye3d/raileye3d_dataset` (commit `ce1b2cf`). Ảnh: bộ ảnh do tác giả dataset cấp. Audit không thiếu file nào (`outputs/data_audit.json`).
 - **Không train.** Dùng weights COCO pretrained. Val và test là **hai ga khác nhau**, nên kết quả test phản ánh khả năng tổng quát sang ga mới.
+- **Chiều chính:** val = Stockerau, test = Fels. **Chiều ngược** (mục 6.5) đổi vai hai ga, chỉ để kiểm tra chéo. Từ đây trở đi, "val" và "test" không ghi thêm gì là theo chiều chính.
 - Nhãn `beyond_safety_line` trên val dùng để chấm điểm và chọn ngưỡng; trên test **chỉ dùng để chấm điểm**. Vị trí L/E do hệ thống tự dò trên từng ảnh, không dùng nhãn.
 
 ## 3. Cấu hình
@@ -68,7 +71,7 @@ Ba cách xác định điểm chân được so sánh:
 | NMS IoU | 0.7 (mặc định, không quét) |
 | Ngưỡng IoU ghép với GT | 0.5 |
 | Môi trường | Windows 11, Intel Core i7-12650H, chạy CPU (không dùng GPU), Python 3.11.7, ultralytics 8.4.215, torch 2.15.0+cpu, OpenCV 4.14.0 |
-| Thời gian chạy | Một tiến trình (các lượt mặc định): khoảng 1.5–3 giây/frame, phần lớn dành cho bước dò L/E. Chọn ngưỡng và test với 4 tiến trình song song: hai vòng quét val 287 + 286 giây, test 224 giây (trong đó dò L/E cho 273 frame mất 74 giây) |
+| Thời gian chạy | Một tiến trình (các lượt mặc định): khoảng 1.5–3 giây/frame, phần lớn dành cho bước dò L/E. Chọn ngưỡng và test với 4 tiến trình song song: hai vòng quét val 287 + 286 giây, test 224 giây (trong đó dò L/E cho 273 frame mất 74 giây). Chiều ngược: quét Fels 1907 giây, chấm Stockerau 17 giây (dùng lại L/E và phát hiện đã lưu) |
 
 ## 4. Cách tính điểm
 
@@ -118,9 +121,10 @@ F1 trên val (ngưỡng mắt cá 0.35):
 
 - Cả ba cách đều chọn **imgsz 1280, `conf` 0.50**, với TP 36, FP 0, FN 5. Ngưỡng mắt cá giữ 0.35, vì 0.20 và 0.50 cho cùng F1.
 - Vòng quét đầu chỉ tới `conf` 0.50. Vì giá trị được chọn nằm ở mép lưới, 0.60–0.80 được thêm vào, **chỉ trên val và trước lượt test**. Lựa chọn không đổi.
+- imgsz 1280 cũng nằm ở mép lưới, vì chỉ thử 640 và 1280. Kích thước lớn hơn chưa được thử.
 - So với mặc định, cấu hình được chọn chỉ hơn **1 TP và bớt 1 FP**. Với mắt cá có 9 cấu hình hoà điểm. Val quá nhỏ để coi đây là giá trị tối ưu chắc chắn.
 
-## 6. Kết quả trên test (Fels): kết quả chính
+## 6. Kết quả trên test (Fels): kết quả chính, và kiểm tra chéo
 
 Các bảng dưới dùng ngưỡng đã chốt ở mục 5.2 (imgsz 1280, `conf` 0.50), trừ khi ghi khác. Dòng "Box GT" không dùng YOLO nên không phụ thuộc ngưỡng.
 
@@ -180,6 +184,54 @@ Khoảng tin cậy 95% được tính bằng bootstrap theo khối 10 frame liê
 Ở mức frame, hệ thống gần như không báo động sai (1 FP trên 93 frame an toàn được chấm, riêng ankle-abstain là 77). Ankle-abstain có F1 frame cao nhất, nhưng phải bỏ qua 39 frame UNKNOWN, nên không so sánh trực tiếp được với các dòng khác.
 
 Chọn ngưỡng theo F1 từng người làm F1 theo frame **giảm nhẹ** so với mặc định: bbox 0.961 → 0.958, abstain 0.984 → 0.971, fallback 0.968 → 0.961.
+
+### 6.5. Kiểm tra chéo: chọn ngưỡng trên Fels, chấm trên Stockerau
+
+Lưới và quy tắc chọn giống hệt mục 5.2, chỉ đổi vai hai ga. Ngưỡng được chốt trước khi chấm trên Stockerau.
+
+**F1 trên Fels, lúc này làm val** (ngưỡng mắt cá 0.35):
+
+| `conf` | bbox 640 | bbox 1280 | abstain 640 | abstain 1280 | fallback 640 | fallback 1280 |
+|---|---|---|---|---|---|---|
+| 0.10 | 0.630 | 0.615 | 0.636 | 0.641 | 0.638 | 0.623 |
+| 0.15 | 0.641 | 0.644 | 0.639 | 0.643 | 0.644 | 0.635 |
+| 0.25 | 0.653 | 0.678 | 0.645 | 0.657 | 0.658 | 0.678 |
+| 0.35 | 0.659 | 0.690 | 0.656 | 0.665 | 0.667 | 0.691 |
+| 0.50 | 0.670 | **0.694** | 0.662 | 0.666 | 0.675 | 0.693 |
+| 0.60 | 0.658 | 0.690 | 0.653 | 0.669 | 0.663 | 0.696 |
+| 0.70 | 0.613 | 0.687 | 0.621 | **0.682** | 0.632 | **0.708** |
+| 0.80 | 0.453 | 0.586 | 0.519 | 0.657 | 0.524 | 0.677 |
+
+**Ngưỡng được chọn:**
+
+| Cách | imgsz | `conf` | Ngưỡng mắt cá | F1 val (Fels) | Mặc định |
+|---|---|---|---|---|---|
+| bbox | 1280 | 0.50 | – | 0.694 | 0.653 |
+| ankle-abstain | 1280 | 0.70 | 0.20 | 0.684 | 0.645 |
+| ankle-fallback | 1280 | 0.70 | 0.35 | 0.708 | 0.658 |
+
+**Kết quả trên Stockerau, lúc này làm test** (37 frame, 41 người vi phạm):
+
+| Cách | TP | FP | FN | Precision | Recall | **F1** | F1 mặc định |
+|---|---|---|---|---|---|---|---|
+| bbox | 36 | 0 | 5 | 1.000 | 0.878 | **0.935** | 0.909 |
+| ankle-abstain | 36 | 0 | 5 | 1.000 | 0.878 | **0.935** | 0.909 |
+| ankle-fallback | 36 | 0 | 5 | 1.000 | 0.878 | **0.935** | 0.909 |
+
+**So sánh hai chiều** (F1 test):
+
+| Cách | Stockerau → **Fels** | Fels → **Stockerau** |
+|---|---|---|
+| bbox | 0.694 (`conf` 0.50) | 0.935 (`conf` 0.50) |
+| ankle-abstain | 0.666 (`conf` 0.50) | 0.935 (`conf` 0.70) |
+| ankle-fallback | 0.693 (`conf` 0.50) | 0.935 (`conf` 0.70) |
+
+- **Bbox chọn cùng một bộ ngưỡng ở cả hai chiều** (1280, 0.50). Hai cách dùng mắt cá chọn `conf` khác nhau (0.50 và 0.70).
+- Cả hai chiều đều chọn imgsz 1280 và `conf` cao hơn mặc định, và F1 test đều tăng. Ở Stockerau, mức tăng chỉ là **thêm 1 TP và bớt 1 FP** (+0.026, khoảng tin cậy 95% từ 0.000 đến +0.071), nên chưa chắc chắn.
+- Ba cách cho **cùng TP, FP, FN** trên Stockerau: 41 người vi phạm không đủ để phân biệt chúng.
+- **0.935 không có nghĩa chiều này tốt hơn.** Hai chiều chấm trên hai ga khác nhau, và Stockerau là cảnh dễ hơn (box GT đạt 0.975, so với 0.866 ở Fels). Không nên lấy trung bình hai số.
+- **Stockerau không phải tập test sạch:** chính lưới này đã được quét trên Stockerau ở mục 5.2, và 0.935 là F1 cao nhất của lưới đó.
+- F1 theo frame trên Stockerau là 0.986 (35 TP, 0 FP, 1 FN) nhưng ít ý nghĩa, vì cả 36 frame được chấm đều có người vi phạm.
 
 ## 7. Phân tích
 
@@ -283,7 +335,7 @@ Các ca dưới đây lấy từ các lượt `conf` mặc định (0.25). Ảnh
 
 1. **Mỗi split chỉ có một camera.** Kết quả chỉ đại diện cho hai cảnh cụ thể, không phải cho sân ga nói chung.
 2. **Val nhỏ** (41 người vi phạm). Ngưỡng được chọn chỉ hơn mặc định 1 TP và bớt 1 FP trên val, nên không chắc là tối ưu. Ngoài ra, M2 từng được chỉnh trên ảnh Stockerau (xem [PROGRESS.md](PROGRESS.md)), nên điểm val có thể lạc quan.
-3. **Test đã bị xem trước khi chọn ngưỡng.** Các lượt mặc định trên test có trước khi chọn ngưỡng, và ankle-fallback cùng YOLO-pose làm detector được chạy thêm sau khi đã xem các lượt test đầu. Ngưỡng chỉ được chọn bằng điểm val, và cấu hình đã chốt được chạy trên test một lần. Dù vậy Fels không còn là tập hoàn toàn mới; muốn có con số độc lập cần thêm camera hoặc ga khác.
+3. **Test đã bị xem trước khi chọn ngưỡng.** Các lượt mặc định trên test có trước khi chọn ngưỡng, và ankle-fallback cùng YOLO-pose làm detector được chạy thêm sau khi đã xem các lượt test đầu. Ngưỡng chỉ được chọn bằng điểm val, và cấu hình đã chốt được chạy trên test một lần. Dù vậy Fels không còn là tập hoàn toàn mới; muốn có con số độc lập cần thêm camera hoặc ga khác. Ở chiều ngược (mục 6.5), Stockerau cũng đã được quét và M2 từng được chỉnh trên ga này.
 4. **Các phân tích "nếu sửa thì F1 bao nhiêu"** (mục 7.3) được tính trên test, chỉ để định hướng, không phải kết quả.
 5. **Khoảng tin cậy ở mục 6.2 chỉ phản ánh một camera**, và không tính đến độ bất định của việc chọn ngưỡng trên val. Các chênh lệch nhỏ khác (dưới khoảng 0.01 F1) chưa được kiểm định.
 6. **Định nghĩa vạch:** nhãn `beyond_safety_line` do người gán, không có toạ độ vạch. Nhãn có vẻ bảo thủ hơn quy tắc "chân vượt mép phía an toàn của dải sơn" mà hệ thống dùng.
@@ -294,7 +346,7 @@ Các ca dưới đây lấy từ các lượt `conf` mặc định (0.25). Ảnh
 
 **Kết luận.**
 - Pipeline tự động hoàn toàn (xử lý ảnh cổ điển cho vùng an toàn, YOLO cho người) đạt F1 cho người vi phạm khoảng **0.69 trên ga Fels, khác với ga dùng để chọn ngưỡng**, và F1 cảnh báo theo frame khoảng **0.96–0.97**, precision 0.99.
-- Chọn ngưỡng trên val (nâng `conf` và imgsz) cải thiện F1 khoảng **+0.04** cho bbox và ankle-fallback, nhờ giảm báo động sai.
+- Chọn ngưỡng trên val (nâng `conf` và imgsz) cải thiện F1 khoảng **+0.04** cho bbox và ankle-fallback, nhờ giảm báo động sai. Khi đổi vai hai ga, F1 trên Stockerau tăng từ 0.909 lên 0.935, và bbox chọn lại đúng bộ ngưỡng cũ.
 - Mắt cá chân cải thiện nhẹ độ chính xác ở người sát vạch, nhưng kết quả cuối **ngang với bbox**. Bbox đơn giản và có precision cao hơn (0.810 so với 0.765); **mắt cá kèm fallback** có recall cao hơn (0.634 so với 0.608). Cách xác định điểm chân **không phải yếu tố quyết định** kết quả.
 - Các yếu tố quyết định là **người bị che khuất**, **phản chiếu trên thân tàu** và **độ ổn định của vùng an toàn**.
 
@@ -323,6 +375,10 @@ railguard evaluate --manifest data/processed/splits.csv --configs configs --spli
 python scripts/select_thresholds.py val
 python scripts/select_thresholds.py test
 
+# Chiều ngược: chọn ngưỡng trên Fels, chấm trên Stockerau
+python scripts/select_thresholds.py val --swap
+python scripts/select_thresholds.py test --swap
+
 # Ảnh các frame lỗi, phân tích vùng an toàn
 python scripts/render_failures.py --run-dir outputs/test_pose_fallback_auto
 python scripts/analyze_boundary_errors.py --split test
@@ -332,6 +388,7 @@ python scripts/analyze_boundary_errors.py --split test
 |---|---|
 | `outputs/threshold_selection/test/{bbox,ankle_abstain,ankle_fallback}` | **Kết quả chính**: ngưỡng chọn trên val |
 | `outputs/threshold_selection/{val_sweep.csv,selection.json}` | Bảng quét val và ngưỡng đã chốt (`*_grid1`: vòng quét đầu) |
+| `outputs/threshold_selection_swap/` | Chiều ngược (mục 6.5), cấu trúc giống `threshold_selection/`, kèm `splits_swap.csv` |
 | `outputs/{val,test}_gt_auto` | Box GT + bbox |
 | `outputs/{val,test}_yolo_auto` | YOLO + bbox, ngưỡng mặc định (val có thêm `_1280`) |
 | `outputs/{val,test}_pose_auto` | YOLO + ankle-abstain (val có thêm `_1280`) |

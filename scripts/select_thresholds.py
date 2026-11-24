@@ -3,6 +3,9 @@
     python scripts/select_thresholds.py val    # sweep -> val_sweep.csv, selection.json
     python scripts/select_thresholds.py test   # scores only the frozen selection.json
 
+Add --swap to exchange the roles of the two stations (val = Fels, test = Stockerau);
+results then go to outputs/threshold_selection_swap. The detection cache is shared.
+
 Scoring is railguard.evaluate.evaluate_manifest, unchanged. Zones and detections are
 only cached between runs, so every run sees the same L/E for a given image.
 
@@ -96,7 +99,8 @@ def detect_job(args):
     return folder.name
 
 
-def score(split: str, method: str, conf: float, imgsz: int, kpt: float, out: Path) -> dict:
+def score(manifest: Path, split: str, method: str, conf: float, imgsz: int, kpt: float,
+          out: Path) -> dict:
     import railguard.evaluate as ev
     import railguard.pipeline as pl
     detector, fallback = METHODS[method]
@@ -120,7 +124,7 @@ def score(split: str, method: str, conf: float, imgsz: int, kpt: float, out: Pat
     pl.estimate_zone, ev.YOLODetector, ev.analyze = cached_zone, CachedDetector, analyze
     try:
         result = ev.evaluate_manifest(
-            MANIFEST, out, ROOT / "configs", split, detector,
+            manifest, out, ROOT / "configs", split, detector,
             "yolo11n-pose.pt" if detector == "pose" else "yolo11n.pt", BOUNDARY, True,
             fallback, conf, 0.5, sample_visualizations=0, imgsz=imgsz, nms_iou=NMS)
     finally:
@@ -152,17 +156,20 @@ def distance(row: dict) -> tuple:
 def run_val(pool):
     import pandas as pd
     prepare(pool, "val", list(itertools.product(["yolo", "pose"], SIZES, CONFS)))
-    rows = []
+    rows, jobs = [], []
     for method in METHODS:
         for imgsz, conf, kpt in itertools.product(SIZES, CONFS, KPTS):
             if method == "bbox" and kpt != DEFAULT["kpt"]:
                 continue  # keypoints are not used by the bbox rule
-            r = score("val", method, conf, imgsz, kpt,
-                      OUT / "val" / f"{method}_{imgsz}_{conf}_{kpt}")
-            rows.append({"method": method, "imgsz": imgsz, "conf": conf, "kpt": kpt,
-                         **{k: r[k] for k in ("tp", "fp", "fn", "precision", "recall", "f1",
-                                              "det_recall", "extra_boxes",
-                                              "unknown_pose_instances")}})
+            jobs.append((method, imgsz, conf, kpt, pool.submit(
+                score, MANIFEST, "val", method, conf, imgsz, kpt,
+                OUT / "val" / f"{method}_{imgsz}_{conf}_{kpt}")))
+    for method, imgsz, conf, kpt, job in jobs:
+        r = job.result()
+        rows.append({"method": method, "imgsz": imgsz, "conf": conf, "kpt": kpt,
+                     **{k: r[k] for k in ("tp", "fp", "fn", "precision", "recall", "f1",
+                                          "det_recall", "extra_boxes",
+                                          "unknown_pose_instances")}})
     pd.DataFrame(rows).to_csv(OUT / "val_sweep.csv", index=False)
     selection = {}
     for method in METHODS:
@@ -182,17 +189,33 @@ def run_test(pool):
     dets = sorted({(METHODS[m][0], c["imgsz"], c["conf"]) for m, c in chosen.items()})
     prepare(pool, "test", dets)
     for m, c in chosen.items():
-        r = score("test", m, c["conf"], c["imgsz"], c["kpt"], OUT / "test" / m)
+        r = score(MANIFEST, "test", m, c["conf"], c["imgsz"], c["kpt"], OUT / "test" / m)
         print(m, {k: c[k] for k in DEFAULT}, {k: r[k] for k in ("tp", "fp", "fn", "precision",
                                                                 "recall", "f1")},
               "frame_f1", r["frame_level_alert_metrics"]["f1"],
               "unknown_frames", r["unknown_frames"], flush=True)
 
 
+def use_swapped_stations():
+    """Exchange val and test in a copy of the manifest; the original stays untouched."""
+    global OUT, MANIFEST
+    import pandas as pd
+    OUT = ROOT / "outputs" / "threshold_selection_swap"
+    OUT.mkdir(parents=True, exist_ok=True)
+    df = pd.read_csv(MANIFEST, dtype={"object_id": str})
+    df["split"] = df["split"].replace({"val": "test", "test": "val"})
+    MANIFEST = OUT / "splits_swap.csv"
+    df.to_csv(MANIFEST, index=False)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("stage", choices=["val", "test"])
-    stage = ap.parse_args().stage
+    ap.add_argument("--swap", action="store_true", help="val = Fels, test = Stockerau")
+    args = ap.parse_args()
+    stage = args.stage
+    if args.swap:
+        use_swapped_stations()
     OUT.mkdir(parents=True, exist_ok=True)
     start = time.time()
     with ProcessPoolExecutor(WORKERS, initializer=_init) as pool:
